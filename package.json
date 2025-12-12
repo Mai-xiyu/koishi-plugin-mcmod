@@ -1,0 +1,23 @@
+{
+  "name": "koishi-plugin-mcmod",
+  "version": "0.1.1",
+  "description": "Koishi plugin: search mcmod.cn and return mod info",
+  "main": "index.js",
+  "engines": {
+    "node": ">=14"
+  },
+  "keywords": [
+    "koishi",
+    "mcmod",
+    "mcmod.cn",
+    "plugin"
+  ],
+  "author": "mai_xiyu",
+  "license": "MIT",
+  "dependencies": {
+    "@napi-rs/canvas": "^0.1.49",
+    "cheerio": "^1.0.0-rc.12",
+    "node-fetch": "^2.6.7",
+    "playwright": "^1.57.0"
+  }
+}

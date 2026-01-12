@@ -204,14 +204,14 @@ function formatListPage(items, pageIndex, type) {
 }
 
 // ================= 渲染：模组/整合包卡片 (修复数据抓取) =================
+// ================= 渲染：模组/整合包卡片 (macOS 风格) =================
 async function drawModCard(url) {
     const res = await fetchWithTimeout(url, { headers: getHeaders() });
     const html = await res.text();
     const $ = cheerio.load(html);
 
-    // 1. 头部信息
+    // --- 1. 数据抓取 (保持原逻辑，确保稳定性) ---
     const titleHtml = $('.class-title').html() || '';
-    // 完全移除 official-group 的内容后再处理标题
     const cleanTitleStr = titleHtml
         .replace(/<div class="class-official-group"[\s\S]*?<\/div>/gi, '')
         .replace(/<[^>]+>/g, '\n');
@@ -221,30 +221,26 @@ async function drawModCard(url) {
 
     let coverUrl = fixUrl($('.class-cover-image img').attr('src'));
     let iconUrl = fixUrl($('.class-icon img').attr('src'));
-    if (!coverUrl) coverUrl = iconUrl;
+    // 如果没有封面，用图标代替；如果没有图标，尝试用封面代替
+    if (!coverUrl && iconUrl) coverUrl = iconUrl;
+    if (!iconUrl && coverUrl) iconUrl = coverUrl;
 
-    // 标签 - 只从 official-group 获取状态标签
+    // 标签
     const tags = [];
-    const officialTags = new Set(); // 用于记录官方标签，避免重复
-    
+    const officialTags = new Set();
     $('.class-official-group div').each((i, el) => {
         const txt = cleanText($(el).text());
-        if (!txt || txt.length > 20) return; // 跳过空或过长的内容
-        
-        officialTags.add(txt); // 记录官方标签
-        
-        let color = '#999';
-        if (txt.includes('开源') || txt.includes('活跃') || txt.includes('稳定')) color = '#2ecc71'; 
-        else if (txt.includes('半弃坑') || txt.includes('Beta')) color = '#f39c12'; 
-        else if (txt.includes('停更') || txt.includes('闭源') || txt.includes('弃坑')) color = '#e74c3c'; 
-        tags.push({ t: txt, bg: color, c: '#fff' });
+        if (!txt || txt.length > 20) return;
+        officialTags.add(txt);
+        let color = '#999', bg = '#eee';
+        if (txt.includes('开源') || txt.includes('活跃') || txt.includes('稳定')) { color = '#2ecc71'; bg = '#e8f5e9'; }
+        else if (txt.includes('半弃坑') || txt.includes('Beta')) { color = '#f39c12'; bg = '#fef9e7'; }
+        else if (txt.includes('停更') || txt.includes('闭源') || txt.includes('弃坑')) { color = '#e74c3c'; bg = '#fce4ec'; }
+        tags.push({ t: txt, bg, c: color });
     });
-    
-    // 模组分类标签（排除已有的官方标签）
     $('.class-label-list a').each((i, el) => {
         const labelText = cleanText($(el).text());
-        if (!labelText || officialTags.has(labelText)) return; // 跳过重复
-        
+        if (!labelText || officialTags.has(labelText)) return;
         const cls = $(el).attr('class') || '';
         let bg = '#e3f2fd', c = '#3498db';
         if(cls.includes('c_1')) { bg='#e8f5e9'; c='#2ecc71'; } 
@@ -252,7 +248,7 @@ async function drawModCard(url) {
         tags.push({ t: labelText, bg, c });
     });
 
-    // 2. 统计数据 (针对0数据修复)
+    // 统计数据
     let score = cleanText($('.class-score-num').text());
     let scoreComment = '';
     if(!score || score === '') {
@@ -270,48 +266,26 @@ async function drawModCard(url) {
         if(t.includes('填充')) fillRate = n;
     });
 
-    // 修复：根据实际 HTML 结构获取推荐/收藏/关注数据
-    // HTML: <div class="col-lg-12 common-fuc-group"><ul><li class="push"><div title="42" class="nums">42</div></li>...</ul></div>
     function getSocialNum(className) {
         let result = '0';
-        
-        // 遍历所有可能的选择器
         const selectors = [
-            `.common-fuc-group li.${className} div.nums`,
-            `.common-fuc-group li.${className} .nums`,
-            `li.${className} div.nums`,
-            `li.${className} .nums`,
+            `.common-fuc-group li.${className} div.nums`, `.common-fuc-group li.${className} .nums`,
+            `li.${className} div.nums`, `li.${className} .nums`
         ];
-        
         for (const sel of selectors) {
             const el = $(sel);
             if (el.length > 0) {
-                // 优先从 title 属性获取
                 const titleAttr = el.attr('title');
-                if (titleAttr) {
-                    const num = titleAttr.replace(/,/g, '').trim();
-                    if (num && /^\d+$/.test(num)) {
-                        result = num;
-                        break;
-                    }
-                }
-                // 其次从文本获取
+                if (titleAttr && /^\d+$/.test(titleAttr.replace(/,/g, '').trim())) { result = titleAttr.replace(/,/g, '').trim(); break; }
                 const text = el.text().replace(/,/g, '').trim();
-                if (text && /^\d+$/.test(text)) {
-                    result = text;
-                    break;
-                }
+                if (text && /^\d+$/.test(text)) { result = text; break; }
             }
         }
-        
         return result;
     }
-
     const pushNum = getSocialNum('push');
     const favNum = getSocialNum('like');
     const subNum = getSocialNum('subscribe');
-    
-    const socialStats = [ { l:'推荐', v:pushNum }, { l:'收藏', v:favNum }, { l:'关注', v:subNum } ];
 
     // 作者
     const authors = [];
@@ -332,56 +306,25 @@ async function drawModCard(url) {
         }
     });
 
-    const honors = [];
-    $('.class-honor-list li').each((i, el) => { honors.push(cleanText($(el).text())); });
-
-    // 版本 (修复：遍历嵌套 ul)
+    // 版本
     const versions = [];
-    // 查找 .mcver 下的所有直接子 ul，或者嵌套的 ul
     const mcVerRoot = $('.mcver');
-    
-    // 策略：mcmod 通常结构是 ul > ul > li
     let verGroups = mcVerRoot.find('ul ul'); 
-    if (verGroups.length === 0) {
-        // 备用：也许是直接 ul > li
-        verGroups = mcVerRoot.find('ul').first();
-    }
-
-    // 遍历找到的 ul 组
-    // 如果是多加载器，通常是多个 ul
+    if (verGroups.length === 0) verGroups = mcVerRoot.find('ul').first();
     const allUls = mcVerRoot.find('ul');
-    
     allUls.each((i, ul) => {
-        // 排除作为容器的 ul (如果有子 ul)
         if ($(ul).find('ul').length > 0) return;
-
         let loader = '';
-        const listItems = $(ul).find('li');
         const vers = [];
-
-        listItems.each((j, li) => {
+        $(ul).find('li').each((j, li) => {
             const txt = cleanText($(li).text());
-            // 如果是以冒号结尾，认为是标题 (例如 "Forge:")
-            if (txt.includes(':') || txt.includes('：')) {
-                loader = txt.replace(/[:：]/g, '').trim();
-            } else {
-                vers.push(txt);
-            }
+            if (txt.includes(':') || txt.includes('：')) loader = txt.replace(/[:：]/g, '').trim();
+            else vers.push(txt);
         });
-
-        // 如果没有显式 Loader 标题，尝试从前一个兄弟元素找
-        if (!loader) {
-             // 有时候标题是 ul 前面的文本
-             // 这里简单处理：如果没找到 loader，默认为 "通用" 或 "其他"
-             // 但根据提供的 HTML，第一个 li 就是 Forge: 
-        }
-        
-        if (loader && vers.length > 0) {
-            versions.push({ l: loader, v: vers.join(', ') });
-        }
+        if (loader && vers.length > 0) versions.push({ l: loader, v: vers.join(', ') });
     });
 
-
+    // 链接
     const links = [];
     $('.common-link-icon-frame a').each((i, el) => {
         const name = $(el).attr('data-original-title') || 'Link';
@@ -393,320 +336,396 @@ async function drawModCard(url) {
         links.push(sn);
     });
 
+    // 简介解析
     const descRoot = $('.common-text').first();
     const descNodes = [];
     function parseNode(node, depth = 0) {
-        if (depth > 10) return; // 防止过深递归
-        
+        if (depth > 10) return;
         if (node.type === 'text') {
             const t = cleanText(node.data);
             if (t && t.length > 1) {
-                // 避免重复添加相同文本
                 const lastNode = descNodes[descNodes.length - 1];
-                if (!lastNode || lastNode.type !== 't' || lastNode.val !== t) {
-                    descNodes.push({ type: 't', val: t, tag: 'p' });
-                }
+                if (!lastNode || lastNode.type !== 't' || lastNode.val !== t) descNodes.push({ type: 't', val: t, tag: 'p' });
             }
         } else if (node.type === 'tag') {
             const tagName = node.name;
             if (tagName === 'img') {
                 const src = node.attribs['data-src'] || node.attribs['src'];
-                if (src && !src.includes('icon') && !src.includes('smilies') && !src.includes('loading')) {
-                    descNodes.push({ type: 'i', src: fixUrl(src) });
-                }
+                if (src && !src.includes('icon') && !src.includes('smilies') && !src.includes('loading')) descNodes.push({ type: 'i', src: fixUrl(src) });
             } else if (['h1','h2','h3','h4','h5','h6'].includes(tagName)) {
                 const text = cleanText($(node).text());
-                if (text && text.length > 1) {
-                    descNodes.push({ type: 't', val: text, tag: 'h' });
-                }
+                if (text && text.length > 1) descNodes.push({ type: 't', val: text, tag: 'h' });
             } else if (tagName === 'li') {
                 const text = cleanText($(node).text());
-                if (text && text.length > 1) {
-                    descNodes.push({ type: 't', val: '• ' + text, tag: 'li' });
-                }
-            } else if (tagName === 'p') {
-                // 对于 p 标签，先收集内部文本再递归处理子节点
-                const pText = $(node).clone().children().remove().end().text().trim();
-                if (pText) descNodes.push({ type: 't', val: pText, tag: 'p' });
-                if (node.children) node.children.forEach(child => parseNode(child, depth + 1));
+                if (text && text.length > 1) descNodes.push({ type: 't', val: '• ' + text, tag: 'li' });
             } else if (tagName === 'br') {
                 descNodes.push({ type: 'br' });
-            } else if (['div', 'span', 'section', 'article'].includes(tagName)) {
-                if (node.children) node.children.forEach(child => parseNode(child, depth + 1));
-            } else if (tagName === 'ul' || tagName === 'ol') {
-                // 列表特殊处理
-                if (node.children) node.children.forEach(child => parseNode(child, depth + 1));
-            } else if (tagName === 'strong' || tagName === 'b' || tagName === 'em' || tagName === 'i') {
-                // 强调文本直接提取
-                const text = cleanText($(node).text());
-                if (text && text.length > 1) {
-                    descNodes.push({ type: 't', val: text, tag: 'p' });
-                }
-            } else {
+            } else if (['p','div','span','section','article','ul','ol','strong','b','em','i'].includes(tagName)) {
                 if (node.children) node.children.forEach(child => parseNode(child, depth + 1));
             }
         }
     }
-    
-    if (descRoot.length) {
-        descRoot[0].children.forEach(child => parseNode(child, 0));
-    }
-    
-    // 如果没有提取到内容，使用 meta 描述
+    if (descRoot.length) descRoot[0].children.forEach(child => parseNode(child, 0));
     if (descNodes.length === 0) {
         const metaDesc = $('meta[name="description"]').attr('content');
         if (metaDesc) descNodes.push({ type: 't', val: metaDesc, tag: 'p' });
     }
-    
-    // 去重和清理
-    const cleanedNodes = [];
-    let lastText = '';
-    for (const node of descNodes) {
-        if (node.type === 't') {
-            // 避免连续重复的文本
-            if (node.val !== lastText) {
-                cleanedNodes.push(node);
-                lastText = node.val;
-            }
-        } else {
-            cleanedNodes.push(node);
-            lastText = '';
-        }
-    }
-    descNodes.length = 0;
-    descNodes.push(...cleanedNodes);
 
+    // --- 2. 布局计算 (macOS 风格) ---
     const width = 800;
     const font = GLOBAL_FONT_FAMILY;
-    const pad = 30;
+    const margin = 20; // 窗口外边距
+    const winPadding = 35; // 窗口内边距
+    const contentW = width - margin * 2 - winPadding * 2;
     
-    // 头部高度计算
+    // 预计算高度
     const dummyC = createCanvas(100, 100);
     const dummy = dummyC.getContext('2d');
+    dummy.font = `bold 32px "${font}"`;
+
+    // 头部区域 (Header)
+    let headerH = 100; // Icon(80) + padding
+    const titleLinesNum = wrapText(dummy, title, 0, 0, contentW - 100, 40, 10, false) / 40;
+    headerH = Math.max(headerH, 10 + titleLinesNum * 40 + (subTitle ? 25 : 0) + (authors.length ? 40 : 0));
     
-    let headCalcY = 40;
-    if(tags.length > 0) headCalcY += 35;
-    dummy.font = `bold 40px "${font}"`;
-    const titleW = width * 0.65; 
-    const calcTitleH = wrapText(dummy, title, 0, 0, titleW, 50, 100, false);
-    headCalcY += calcTitleH;
-    if(subTitle) headCalcY += 30;
-    if(authors.length > 0) {
-        headCalcY += 30; 
-        let ax = pad;
-        let totalAuthH = 60;
-        for(const a of authors) {
-            dummy.font = `bold 18px "${font}"`; const nW = dummy.measureText(a.n).width;
-            dummy.font = `12px "${font}"`; const rW = dummy.measureText(a.r||'作者').width;
-            const itemW = 60 + nW + Math.max(rW, 20) + 30; 
-            if(ax + itemW > titleW) { ax = pad; totalAuthH += 60; }
-            ax += itemW;
-        }
-        headCalcY += totalAuthH;
-    }
-    const bannerH = Math.max(320, headCalcY + 40);
+    // 标签区域
+    let tagsH = 0;
+    if (tags.length) tagsH = 40;
 
-    const canvas = createCanvas(width, 15000);
-    const ctx = canvas.getContext('2d');
-    ctx.fillStyle = '#f0f2f5'; ctx.fillRect(0,0,width,15000);
+    // 封面图 (Cover)
+    let coverH = 0;
+    if (coverUrl) coverH = 300; // 固定封面显示高度
 
-    try {
-        if(coverUrl) {
-            const img = await loadImage(coverUrl);
-            const r = Math.max(width/img.width, bannerH/img.height);
-            // 使用 Clip 确保不溢出
-            ctx.save();
-            ctx.beginPath(); ctx.rect(0,0,width,bannerH); ctx.clip();
-            ctx.drawImage(img, 0,0,img.width,img.height, (width-img.width*r)/2, (bannerH-img.height*r)/2, img.width*r, img.height*r);
-            ctx.fillStyle = 'rgba(0,0,0,0.85)'; ctx.fillRect(0,0,width,bannerH);
-            ctx.restore();
-        } else {
-            ctx.fillStyle = '#2c3e50'; ctx.fillRect(0,0,width,bannerH);
-        }
-    } catch(e) { ctx.fillStyle='#333'; ctx.fillRect(0,0,width,bannerH); }
-
-    let headY = 40;
-    let tx = pad;
-    tags.forEach(t => {
-        ctx.font = `bold 14px "${font}"`; const w = ctx.measureText(t.t).width + 16;
-        ctx.fillStyle = t.bg; roundRect(ctx, tx, headY, w, 26, 4); ctx.fill();
-        ctx.fillStyle = t.c; ctx.fillText(t.t, tx+8, headY+18); tx += w + 10;
-    });
-    if(tags.length) headY += 45;
-
-    ctx.textBaseline = 'top';
-    ctx.fillStyle = '#fff'; ctx.font = `bold 40px "${font}"`;
-    headY = wrapText(ctx, title, pad, headY, width*0.65, 50, 5, true) + 10;
-    if(subTitle) {
-        ctx.fillStyle = '#ccc'; ctx.font = `18px "${font}"`;
-        ctx.fillText(subTitle, pad, headY);
-        headY += 35;
-    } else { headY += 15; }
-
-    if(authors.length > 0) {
-        let ax = pad;
-        for(const a of authors) {
-            ctx.font = `bold 18px "${font}"`; const nW = ctx.measureText(a.n).width;
-            ctx.font = `12px "${font}"`; const rW = ctx.measureText(a.r||'作者').width;
-            const itemW = 60 + nW + Math.max(rW, 20) + 30;
-            if(ax + itemW > width*0.65) { ax = pad; headY += 60; }
-            ctx.save(); ctx.beginPath(); ctx.arc(ax+24, headY+24, 24, 0, Math.PI*2); 
-            ctx.fillStyle='#eee'; ctx.fill(); ctx.clip();
-            if(a.i) { try{ const img=await loadImage(a.i); ctx.drawImage(img, ax, headY, 48, 48); }catch(e){} }
-            ctx.restore();
-            ctx.fillStyle='#fff'; ctx.font=`bold 18px "${font}"`; ctx.fillText(a.n, ax+60, headY+5);
-            ctx.fillStyle='#999'; ctx.font=`12px "${font}"`; ctx.fillText(a.r||'作者', ax+60, headY+28);
-            ax += itemW;
-        }
+    // 统计数据 (Stats Grid)
+    // 布局：每行4个数据
+    const statsItems = [
+        { l: '评分', v: score }, { l: '热度', v: viewNum }, 
+        { l: '推荐', v: pushNum }, { l: '收藏', v: favNum },
+        { l: '关注', v: subNum }
+    ];
+    if (fillRate !== '--') statsItems.push({ l: '填充率', v: fillRate });
+    if (yIndex) statsItems.push({ l: '昨日指数', v: yIndex });
+    
+    let statsH = 0;
+    if (statsItems.length) {
+        const rows = Math.ceil(statsItems.length / 4);
+        statsH = rows * 70 + (rows - 1) * 15;
     }
 
-    let rx = width - 40, ry = 40;
-    const sbW = 140, sbH = 90;
-    ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth=2;
-    roundRect(ctx, rx-sbW, ry, sbW, sbH, 10); ctx.stroke();
-    ctx.textAlign='center';
-    ctx.fillStyle='#fff'; ctx.font=`bold 42px "${font}"`; ctx.fillText(score, rx-sbW/2, ry+12);
-    ctx.font=`16px "${font}"`; ctx.fillText(scoreComment||'综合评分', rx-sbW/2, ry+62);
-    ctx.textAlign='left';
-    
-    ry += 110;
-    const drawHeaderStat = (l, v) => {
-        ctx.textAlign='right';
-        ctx.fillStyle='#aaa'; ctx.font=`14px "${font}"`; ctx.fillText(l, rx, ry);
-        ctx.fillStyle='#fff'; ctx.font=`bold 20px "${font}"`; ctx.fillText(v, rx - ctx.measureText(l).width - 15, ry-3);
-        ctx.textAlign='left'; ry += 35;
-    };
-    drawHeaderStat('总浏览', viewNum);
-    if(fillRate!=='--') drawHeaderStat('填充率', fillRate);
-    socialStats.forEach(s => drawHeaderStat(s.l, s.v));
-    if(yIndex) drawHeaderStat('昨日指数', yIndex);
+    // 属性列表 (Props)
+    let propsH = 0;
+    if (props.length) {
+        const rows = Math.ceil(props.length / 2);
+        propsH = rows * 30 + 10;
+    }
 
-    let cursorY = bannerH + 20;
-
-    const propStart = cursorY;
-    ctx.fillStyle = '#fff';
-    let py = propStart + 30;
-    const pColW = (width - 80) / 2;
-
-    props.forEach((p, i) => {
-        const col = i % 2; const row = Math.floor(i / 2);
-        const px = 40 + col * pColW; const pposy = py + row * 35;
-        ctx.fillStyle = '#888'; ctx.font = `14px "${font}"`; ctx.fillText(p.l+':', px, pposy);
-        const lw = ctx.measureText(p.l+':').width;
-        ctx.fillStyle = '#333'; ctx.font = `14px "${font}"`; ctx.fillText(p.v, px+lw+5, pposy);
-    });
-    py += Math.ceil(props.length/2)*35 + 15;
-
-    if(versions.length) {
-        py += 10;
-        ctx.fillStyle='#333'; ctx.font=`bold 18px "${font}"`; ctx.fillText('支持版本', 40, py); py+=30;
+    // 版本和链接
+    let extraH = 0;
+    if (versions.length) {
+        extraH += 30; // Title
         versions.forEach(v => {
-            ctx.fillStyle='#555'; ctx.font=`bold 14px "${font}"`; ctx.fillText(v.l, 40, py);
-            const lw = ctx.measureText(v.l).width + 10;
-            ctx.fillStyle='#e74c3c'; ctx.font=`14px "${font}"`; 
-            py = wrapText(ctx, v.v, 40+lw, py, width-80-lw, 24, 500, true) + 15;
+            dummy.font = `14px "${font}"`;
+            const lw = dummy.measureText(v.l).width + 10;
+            const lines = wrapText(dummy, v.v, 0, 0, contentW - lw, 20, 100, false) / 20;
+            extraH += lines * 20 + 10;
         });
     }
+    if (links.length) extraH += 50;
 
-    if(links.length) {
-        py += 20; let lx = 40;
+    // 简介 (Desc)
+    let descH = 0;
+    dummy.font = `16px "${font}"`;
+    for (const node of descNodes) {
+        if (node.type === 't') {
+            const isHeader = node.tag === 'h';
+            dummy.font = `${isHeader ? 'bold' : ''} ${isHeader ? 22 : 16}px "${font}"`;
+            const lh = isHeader ? 32 : 26;
+            const lines = wrapText(dummy, node.val, 0, 0, contentW, lh, 100, false) / lh;
+            descH += lines * lh + (isHeader ? 15 : 10);
+        } else if (node.type === 'i') {
+            descH += 400; // 估算图片高度
+        } else if (node.type === 'br') {
+            descH += 10;
+        }
+    }
+    if (descH > 0) descH += 50; // Title + Padding
+
+    // 总高度
+    let cursorY = margin + 40; // Top traffic lights area
+    const components = [
+        { h: headerH, gap: 20 },
+        { h: tagsH, gap: 10 },
+        { h: coverH, gap: 25 },
+        { h: statsH, gap: 25 },
+        { h: propsH, gap: 25 },
+        { h: extraH, gap: 25 },
+        { h: descH, gap: 20 }
+    ];
+    
+    components.forEach(c => { if(c.h > 0) cursorY += c.h + c.gap; });
+    const windowH = cursorY;
+    const totalH = windowH + margin * 2;
+
+    // --- 3. 开始绘制 ---
+    const canvas = createCanvas(width, totalH);
+    const ctx = canvas.getContext('2d');
+
+    // 背景 (Bing 壁纸)
+    try {
+        const bgUrl = 'https://bing.biturl.top/?resolution=1920&format=image&index=0&mkt=zh-CN';
+        const bgImg = await loadImage(bgUrl);
+        const r = Math.max(width / bgImg.width, totalH / bgImg.height);
+        ctx.drawImage(bgImg, (width - bgImg.width * r) / 2, (totalH - bgImg.height * r) / 2, bgImg.width * r, bgImg.height * r);
+        ctx.fillStyle = 'rgba(0,0,0,0.15)'; // 遮罩
+        ctx.fillRect(0, 0, width, totalH);
+    } catch (e) {
+        const grad = ctx.createLinearGradient(0, 0, 0, totalH);
+        grad.addColorStop(0, '#e0c3fc'); grad.addColorStop(1, '#8ec5fc');
+        ctx.fillStyle = grad; ctx.fillRect(0, 0, width, totalH);
+    }
+
+    // 窗口 (Acrylic)
+    const winX = margin;
+    const winY = margin;
+    
+    ctx.save();
+    ctx.shadowColor = 'rgba(0,0,0,0.2)'; ctx.shadowBlur = 40; ctx.shadowOffsetY = 20;
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+    roundRect(ctx, winX, winY, width - margin * 2, windowH, 16);
+    ctx.fill();
+    ctx.restore();
+    
+    // 窗口边框
+    ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 1;
+    roundRect(ctx, winX, winY, width - margin * 2, windowH, 16);
+    ctx.stroke();
+
+    // 交通灯
+    const trafficY = winY + 20;
+    ['#ff5f56', '#ffbd2e', '#27c93f'].forEach((c, i) => {
+        ctx.beginPath(); ctx.arc(winX + 20 + i * 25, trafficY, 6, 0, Math.PI * 2); ctx.fillStyle = c; ctx.fill();
+    });
+
+    // --- 内容绘制 ---
+    let dy = winY + 50;
+    const cx = winX + winPadding;
+
+    // 1. Header
+    // Icon
+    const iconSize = 80;
+    if (iconUrl) {
+        try {
+            const img = await loadImage(iconUrl);
+            ctx.save();
+            roundRect(ctx, cx, dy, iconSize, iconSize, 12); ctx.clip();
+            ctx.drawImage(img, cx, dy, iconSize, iconSize);
+            ctx.restore();
+        } catch(e) {
+            ctx.fillStyle = '#ddd'; roundRect(ctx, cx, dy, iconSize, iconSize, 12); ctx.fill();
+        }
+    }
+    
+    // Title
+    const titleX = cx + iconSize + 20;
+    ctx.fillStyle = '#333'; ctx.font = `bold 32px "${font}"`; ctx.textBaseline = 'top';
+    const titleDrawnH = wrapText(ctx, title, titleX, dy - 5, contentW - iconSize - 20, 40, 3, true);
+    
+    // SubTitle
+    let subY = titleDrawnH + 5;
+    if (subTitle) {
+        ctx.fillStyle = '#888'; ctx.font = `16px "${font}"`;
+        ctx.fillText(subTitle, titleX, subY);
+        subY += 25;
+    }
+
+    // Authors
+    if (authors.length) {
+        let ax = titleX;
+        for (const a of authors.slice(0, 3)) { // 最多显示3个作者
+            ctx.save(); ctx.beginPath(); ctx.arc(ax + 12, subY + 12, 12, 0, Math.PI * 2); ctx.clip();
+            if (a.i) { try { const img = await loadImage(a.i); ctx.drawImage(img, ax, subY, 24, 24); } catch(e) { ctx.fillStyle='#ccc'; ctx.fill(); } }
+            else { ctx.fillStyle='#ccc'; ctx.fill(); }
+            ctx.restore();
+            
+            ctx.fillStyle = '#666'; ctx.font = `14px "${font}"`;
+            ctx.fillText(a.n, ax + 30, subY + 5);
+            ax += ctx.measureText(a.n).width + 45;
+        }
+    }
+    
+    dy += Math.max(headerH, 100) + 20;
+
+    // 2. Tags
+    if (tags.length) {
+        let tx = cx;
+        tags.forEach(t => {
+            ctx.font = `12px "${font}"`;
+            const tw = ctx.measureText(t.t).width + 20;
+            if (tx + tw < cx + contentW) {
+                ctx.fillStyle = t.bg; roundRect(ctx, tx, dy, tw, 24, 6); ctx.fill();
+                ctx.fillStyle = t.c; ctx.fillText(t.t, tx + 10, dy + 6);
+                tx += tw + 10;
+            }
+        });
+        dy += 35;
+    }
+
+    // 3. Cover Image
+    if (coverUrl) {
+        try {
+            const img = await loadImage(coverUrl);
+            const coverW = contentW;
+            const coverH_Actual = 280;
+            // Crop fit
+            const r = Math.max(coverW / img.width, coverH_Actual / img.height);
+            ctx.save();
+            roundRect(ctx, cx, dy, coverW, coverH_Actual, 12); ctx.clip();
+            ctx.drawImage(img, (coverW - img.width * r) / 2 + cx, (coverH_Actual - img.height * r) / 2 + dy, img.width * r, img.height * r);
+            ctx.restore();
+            dy += coverH_Actual + 25;
+        } catch(e) {}
+    }
+
+    // 4. Stats Grid
+    if (statsItems.length) {
+        const cols = 4;
+        const gap = 15;
+        const itemW = (contentW - (cols - 1) * gap) / cols;
+        const itemH = 70;
+        
+        statsItems.forEach((s, i) => {
+            const c = i % cols; const r = Math.floor(i / cols);
+            const x = cx + c * (itemW + gap);
+            const y = dy + r * (itemH + gap);
+            
+            ctx.fillStyle = 'rgba(255,255,255,0.6)';
+            roundRect(ctx, x, y, itemW, itemH, 10); ctx.fill();
+            
+            ctx.textAlign = 'center';
+            ctx.fillStyle = '#888'; ctx.font = `12px "${font}"`;
+            ctx.fillText(s.l, x + itemW / 2, y + 15);
+            ctx.fillStyle = '#333'; ctx.font = `bold 20px "${font}"`;
+            ctx.fillText(s.v, x + itemW / 2, y + 40);
+        });
+        ctx.textAlign = 'left';
+        dy += Math.ceil(statsItems.length / cols) * (itemH + gap) + 10;
+    }
+
+    // 5. Props List
+    if (props.length) {
+        const colW = contentW / 2;
+        props.forEach((p, i) => {
+            const c = i % 2; const r = Math.floor(i / 2);
+            const x = cx + c * colW;
+            const y = dy + r * 30;
+            
+            ctx.fillStyle = '#888'; ctx.font = `14px "${font}"`;
+            ctx.fillText(p.l + ':', x, y);
+            const lw = ctx.measureText(p.l + ':').width;
+            ctx.fillStyle = '#333'; 
+            // 截断过长文本
+            let val = p.v;
+            while(ctx.measureText(val).width > colW - lw - 20 && val.length > 5) val = val.slice(0, -1);
+            if(val.length < p.v.length) val += '...';
+            ctx.fillText(val, x + lw + 10, y);
+        });
+        dy += Math.ceil(props.length / 2) * 30 + 15;
+    }
+
+    // 6. Versions & Links
+    if (versions.length) {
+        ctx.fillStyle = '#333'; ctx.font = `bold 16px "${font}"`; ctx.fillText('支持版本', cx, dy); dy += 25;
+        versions.forEach(v => {
+            ctx.fillStyle = '#555'; ctx.font = `bold 14px "${font}"`; ctx.fillText(v.l, cx, dy);
+            const lw = ctx.measureText(v.l).width + 10;
+            ctx.fillStyle = '#e74c3c'; ctx.font = `14px "${font}"`; 
+            dy = wrapText(ctx, v.v, cx + lw, dy, contentW - lw, 20, 500, true) + 5;
+        });
+        dy += 15;
+    }
+    if (links.length) {
+        let lx = cx;
         links.forEach(l => {
-            ctx.font = `bold 14px "${font}"`; const w = ctx.measureText(l).width+30;
-            if(lx+w < width-40) {
-                ctx.fillStyle = '#333'; roundRect(ctx, lx, py, w, 30, 6); ctx.fill();
-                ctx.fillStyle = '#fff'; ctx.fillText(l, lx+15, py+8);
+            ctx.font = `bold 12px "${font}"`;
+            const w = ctx.measureText(l).width + 20;
+            if (lx + w < cx + contentW) {
+                ctx.fillStyle = '#333'; roundRect(ctx, lx, dy, w, 24, 12); ctx.fill();
+                ctx.fillStyle = '#fff'; ctx.fillText(l, lx + 10, dy + 6);
                 lx += w + 10;
             }
         });
-        py += 50;
+        dy += 45;
     }
 
-    const propH = py - propStart + 10;
-    ctx.globalCompositeOperation='destination-over';
-    ctx.fillStyle='#fff'; roundRect(ctx, 20, propStart, width-40, propH, 12); ctx.fill();
-    ctx.globalCompositeOperation='source-over';
-    
-    cursorY += propH + 20;
-
-    const descStart = cursorY;
-    ctx.fillStyle='#333'; ctx.font=`bold 22px "${font}"`; ctx.fillText('简介', 40, descStart+30);
-    ctx.strokeStyle='#3498db'; ctx.lineWidth=4; ctx.beginPath(); ctx.moveTo(40, descStart+45); ctx.lineTo(80, descStart+45); ctx.stroke();
-
-    let dy = descStart + 70;
-    for (const node of descNodes) {
-        if (node.type === 't') {
-            if (node.tag === 'h') { ctx.fillStyle='#2c3e50'; ctx.font=`bold 20px "${font}"`; dy+=20; }
-            else if (node.tag === 'li') { ctx.fillStyle='#555'; ctx.font=`16px "${font}"`; }
-            else { ctx.fillStyle='#444'; ctx.font=`16px "${font}"`; }
-            
-            if(node.val.trim()) {
-                dy = wrapText(ctx, node.val, 40, dy, width-80, 28, 5000, true) + 15;
+    // 7. Description
+    if (descNodes.length) {
+        ctx.fillStyle = '#333'; ctx.font = `bold 20px "${font}"`; ctx.fillText('简介', cx, dy);
+        ctx.fillStyle = '#3498db'; ctx.fillRect(cx, dy + 25, 40, 4);
+        dy += 45;
+        
+        for (const node of descNodes) {
+            if (node.type === 't') {
+                const isHeader = node.tag === 'h';
+                ctx.font = `${isHeader ? 'bold' : ''} ${isHeader ? 22 : 16}px "${font}"`;
+                ctx.fillStyle = isHeader ? '#2c3e50' : '#444';
+                const lh = isHeader ? 32 : 26;
+                dy = wrapText(ctx, node.val, cx, dy, contentW, lh, 5000, true) + (isHeader ? 15 : 10);
+            } else if (node.type === 'i') {
+                try {
+                    const img = await loadImage(node.src);
+                    const maxH = 400;
+                    const r = Math.min(contentW / img.width, maxH / img.height);
+                    const dw = img.width * r; const dh = img.height * r;
+                    ctx.drawImage(img, cx + (contentW - dw) / 2, dy, dw, dh);
+                    dy += dh + 20;
+                } catch(e) {}
+            } else if (node.type === 'br') {
+                dy += 10;
             }
-        } else if (node.type === 'i') {
-            dy += 15;
-            try {
-                const img = await loadImage(node.src);
-                const maxW = width - 80;
-                const r = Math.min(1, maxW/img.width);
-                const dw = img.width * r; const dh = img.height * r;
-                ctx.drawImage(img, 40+(maxW-dw)/2, dy, dw, dh);
-                dy += dh + 25;
-            } catch(e) {}
-        } else if (node.type === 'br') { dy += 10; }
+        }
     }
 
-    const descH = dy - descStart + 40;
-    ctx.globalCompositeOperation='destination-over';
-    ctx.fillStyle='#fff'; roundRect(ctx, 20, descStart, width-40, descH, 12); ctx.fill();
-    ctx.globalCompositeOperation='source-over';
+    // Footer
+    ctx.fillStyle = '#999'; ctx.font = `12px "${font}"`; ctx.textAlign = 'center';
+    ctx.fillText('mcmod.cn | Powered by Koishi', width / 2, totalH - 12);
 
-    cursorY += descH + 40;
-    ctx.fillStyle='#ccc'; ctx.font=`12px "${font}"`; ctx.textAlign='center';
-    ctx.fillText('mcmod.cn | Powered by Koishi', width/2, cursorY-15);
-
-    const finalCanvas = createCanvas(width, cursorY);
-    finalCanvas.getContext('2d').drawImage(canvas, 0,0,width,cursorY, 0,0,width,cursorY);
-    return finalCanvas.toBuffer('image/png');
+    return canvas.toBuffer('image/png');
 }
 
+// ================= 渲染：教程卡片 (macOS 风格) =================
 async function drawTutorialCard(url) {
     const res = await fetchWithTimeout(url, { headers: getHeaders() });
     const html = await res.text();
     const $ = cheerio.load(html);
 
-    // 提取教程基本信息
-    const title = cleanText($('h1, .post-title, .article-title').first().text()) || cleanText($('title').text().split('-')[0]);
+    // --- 1. 核心数据抓取 ---
+
+    // 标题
+    const title = cleanText($('h1, .post-title, .article-title, .postname h5').first().text()) || cleanText($('title').text().split('-')[0]);
     
-    // 作者信息 (从 post-user-frame 获取)
+    // 作者
     let author = cleanText($('.post-user-frame .post-user-name a').first().text());
     if (!author) author = cleanText($('.post-user-name a').first().text());
     if (!author) author = cleanText($('a[href*="/center/"]').first().text());
     if (!author) author = '未知作者';
     
-    // 作者头像
+    // 头像
     let authorAvatar = fixUrl($('.post-user-frame .post-user-avatar img').attr('src'));
     if (!authorAvatar) authorAvatar = fixUrl($('.post-user-avatar img').attr('src'));
 
-    // 从 common-rowlist-2 获取详细信息
+    // 浏览量/日期
     let views = '0';
     let date = '';
     $('.common-rowlist-2 li').each((i, el) => {
         const text = $(el).text();
-        if (text.includes('浏览量')) {
-            views = text.replace(/[^0-9]/g, '') || '0';
-        }
+        if (text.includes('浏览量')) views = text.replace(/[^0-9]/g, '') || '0';
         if (text.includes('创建日期')) {
-            // 优先从 data-original-title 获取完整日期
             const fullDate = $(el).attr('data-original-title');
-            if (fullDate) {
-                date = fullDate.split(' ')[0]; // 只取日期部分
-            } else {
-                date = text.replace('创建日期：', '').trim();
-            }
+            date = fullDate ? fullDate.split(' ')[0] : text.replace('创建日期：', '').trim();
         }
     });
     
-    // 获取推荐和收藏 (需要 Cookie 登录状态)
+    // 互动数据
     function getSocialNum(className) {
         let result = '0';
         const selectors = [
@@ -718,21 +737,13 @@ async function drawTutorialCard(url) {
         for (const sel of selectors) {
             const el = $(sel);
             if (el.length > 0) {
-                // 优先从 title 属性获取
                 const titleAttr = el.attr('title');
                 if (titleAttr) {
                     const num = titleAttr.replace(/,/g, '').trim();
-                    if (num && /^\d+$/.test(num)) {
-                        result = num;
-                        break;
-                    }
+                    if (num && /^\d+$/.test(num)) return num;
                 }
-                // 其次从文本获取
                 const text = el.text().replace(/,/g, '').trim();
-                if (text && /^\d+$/.test(text)) {
-                    result = text;
-                    break;
-                }
+                if (text && /^\d+$/.test(text)) return text;
             }
         }
         return result;
@@ -740,7 +751,7 @@ async function drawTutorialCard(url) {
     const pushNum = getSocialNum('push');
     const favNum = getSocialNum('like');
 
-    // 提取目录
+    // 目录
     const tocItems = [];
     $('a[href^="javascript:void(0);"]').each((i, el) => {
         const text = cleanText($(el).text());
@@ -749,9 +760,9 @@ async function drawTutorialCard(url) {
         }
     });
 
-    // 提取正文内容（段落和图片）
+    // 正文提取
     const contentNodes = [];
-    const contentRoot = $('.post-content, .article-content, .common-text').first();
+    const contentRoot = $('.post-content, .article-content, .common-text, .news-text').first();
     
     function parseContent(node) {
         if (node.type === 'text') {
@@ -761,7 +772,7 @@ async function drawTutorialCard(url) {
             const tagName = node.name;
             if (tagName === 'img') {
                 const src = node.attribs['data-src'] || node.attribs['src'];
-                if (src && !src.includes('loading') && !src.includes('smilies')) {
+                if (src && !src.includes('loading') && !src.includes('smilies') && !src.includes('icon')) {
                     contentNodes.push({ type: 'i', src: fixUrl(src) });
                 }
             } else if (['h1','h2','h3','h4'].includes(tagName)) {
@@ -770,7 +781,7 @@ async function drawTutorialCard(url) {
             } else if (tagName === 'li') {
                 const text = cleanText($(node).text());
                 if (text) contentNodes.push({ type: 't', val: '• ' + text, tag: 'li' });
-            } else if (['p', 'div', 'blockquote', 'span', 'strong', 'b'].includes(tagName)) {
+            } else if (['p', 'div', 'blockquote', 'span', 'strong', 'b', 'i', 'em'].includes(tagName)) {
                 if (node.children) node.children.forEach(parseContent);
             } else {
                 if (node.children) node.children.forEach(parseContent);
@@ -778,760 +789,231 @@ async function drawTutorialCard(url) {
         }
     }
     
-    if (contentRoot.length) contentRoot[0].children.forEach(parseContent);
+    if (contentRoot.length) {
+        const textContainer = contentRoot.find('.text').first();
+        if (textContainer.length > 0) textContainer[0].children.forEach(parseContent);
+        else contentRoot[0].children.forEach(parseContent);
+    }
     
-    // 如果没有提取到内容，使用 meta 描述
     if (contentNodes.length === 0) {
         const metaDesc = $('meta[name="description"]').attr('content');
         if (metaDesc) contentNodes.push({ type: 't', val: metaDesc, tag: 'p' });
     }
 
-    const width = 800;
+    // --- 2. 布局常量定义 ---
+    const width = 1000;
     const font = GLOBAL_FONT_FAMILY;
-    const padding = 30;
+    const margin = 20;
+    const winPadding = 40;
+    const contentW = width - margin * 2 - winPadding * 2;
+
+    // --- 3. 关键步骤：预加载图片以获取真实高度 ---
+    // 并行加载所有图片，确保后续高度计算准确
+    await Promise.all(contentNodes.map(async (node) => {
+        if (node.type === 'i') {
+            try {
+                const img = await loadImage(node.src);
+                node.img = img; // 保存 Image 对象
+                // 计算自适应尺寸：宽度最大为 contentW，高度按比例缩放，不设上限
+                const scale = Math.min(contentW / img.width, 1); 
+                node.dw = img.width * scale;
+                node.dh = img.height * scale;
+            } catch (e) {
+                node.error = true;
+            }
+        }
+    }));
+
+    // --- 4. 精确计算总高度 ---
+    const dummyC = createCanvas(100, 100);
+    const dummy = dummyC.getContext('2d');
+    let totalH = 0;
     
-    // 预计算高度
-    const tempCanvas = createCanvas(100, 100);
-    const tempCtx = tempCanvas.getContext('2d');
-    let estimatedHeight = 250; // Header area
-    
+    // Header 高度
+    dummy.font = `bold 32px "${font}"`;
+    const titleLines = wrapText(dummy, title, 0, 0, contentW, 45, 5, false) / 45;
+    const headerH = 60 + titleLines * 45 + 50 + 20;
+    totalH += headerH;
+
     // TOC 高度
+    let tocH = 0;
     if (tocItems.length > 0) {
-        estimatedHeight += 70 + Math.ceil(tocItems.length / 2) * 30;
+        tocH = 50 + Math.ceil(tocItems.length / 2) * 35 + 20;
+        totalH += tocH;
     }
-    
-    // 内容高度估算 (遍历所有节点)
-    tempCtx.font = `16px "${font}"`;
-    for (const node of contentNodes) { 
+
+    // 正文高度 (使用真实图片高度)
+    let contentH = 0;
+    dummy.font = `16px "${font}"`;
+    for (const node of contentNodes) {
         if (node.type === 't') {
             const isHeader = node.tag === 'h';
             const fontSize = isHeader ? 22 : 16;
-            tempCtx.font = `${isHeader ? 'bold' : ''} ${fontSize}px "${font}"`;
+            dummy.font = `${isHeader ? 'bold' : ''} ${fontSize}px "${font}"`;
             const lineHeight = Math.floor(fontSize * 1.6);
-            const lines = wrapText(tempCtx, node.val, 0, 0, width - padding*2 - 40, lineHeight, 10000, false) / lineHeight;
-            estimatedHeight += lines * lineHeight + (isHeader ? 25 : 15);
-        } else if (node.type === 'i') {
-            estimatedHeight += 500; // 预估图片高度
+            // 这里不再限制行数 (limit = 10000)，显示全部文本
+            const lines = wrapText(dummy, node.val, 0, 0, contentW, lineHeight, 10000, false) / lineHeight;
+            contentH += lines * lineHeight + (isHeader ? 25 : 15);
+        } else if (node.type === 'i' && !node.error && node.img) {
+            // 使用预加载时计算出的真实高度
+            contentH += node.dh + 25; 
         }
     }
-    
-    estimatedHeight = Math.min(estimatedHeight + 300, 30000); // 增加最大高度限制
+    if (contentH === 0) contentH = 100;
+    totalH += contentH + 50; // Padding
 
-    const canvas = createCanvas(width, estimatedHeight);
+    const windowH = totalH+100;
+    const canvasH = windowH + margin * 2;
+
+    // --- 5. 绘制 ---
+    const canvas = createCanvas(width, canvasH);
     const ctx = canvas.getContext('2d');
-    
-    // 背景
-    ctx.fillStyle = '#f0f2f5';
-    ctx.fillRect(0, 0, width, estimatedHeight);
 
-    // 顶部装饰条
-    const headerH = 180;
-    const grad = ctx.createLinearGradient(0, 0, width, 0);
-    grad.addColorStop(0, '#4facfe');
-    grad.addColorStop(1, '#00f2fe');
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, width, headerH);
-    
-    // 装饰圆圈
-    ctx.fillStyle = 'rgba(255,255,255,0.1)';
-    ctx.beginPath(); ctx.arc(width-100, 50, 80, 0, Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.arc(100, 150, 60, 0, Math.PI*2); ctx.fill();
+    // 背景 (Bing)
+    try {
+        const bgUrl = 'https://bing.biturl.top/?resolution=1920&format=image&index=0&mkt=zh-CN';
+        const bgImg = await loadImage(bgUrl);
+        const r = Math.max(width / bgImg.width, canvasH / bgImg.height);
+        ctx.drawImage(bgImg, (width - bgImg.width * r) / 2, (canvasH - bgImg.height * r) / 2, bgImg.width * r, bgImg.height * r);
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+        ctx.fillRect(0, 0, width, canvasH);
+    } catch (e) {
+        const grad = ctx.createLinearGradient(0, 0, 0, canvasH);
+        grad.addColorStop(0, '#a18cd1'); grad.addColorStop(1, '#fbc2eb');
+        ctx.fillStyle = grad; ctx.fillRect(0, 0, width, canvasH);
+    }
 
-    // 主卡片容器
-    const mainCardW = width - 40;
-    let cursorY = 80; 
-    
-    // 1. 标题卡片
-    ctx.shadowColor = 'rgba(0,0,0,0.1)';
-    ctx.shadowBlur = 15;
-    ctx.shadowOffsetY = 5;
-    ctx.fillStyle = '#fff';
-    
-    // 标题文字计算
-    ctx.font = `bold 32px "${font}"`;
-    const titleLines = wrapText(ctx, title, 0, 0, mainCardW - 60, 45, 3, false) / 45;
-    const actualTitleH = 60 + titleLines * 45 + 80; // 增加高度放作者信息
-    
-    roundRect(ctx, 20, cursorY, mainCardW, actualTitleH, 16);
+    // 窗口主体
+    const winX = margin, winY = margin;
+    ctx.save();
+    ctx.shadowColor = 'rgba(0,0,0,0.2)'; ctx.shadowBlur = 50; ctx.shadowOffsetY = 20;
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+    roundRect(ctx, winX, winY, width - margin * 2, windowH, 16);
     ctx.fill();
-    ctx.shadowBlur = 0;
-    ctx.shadowOffsetY = 0;
-    
-    // 绘制标题内容
-    ctx.fillStyle = '#333';
-    ctx.textBaseline = 'top';
-    wrapText(ctx, title, 50, cursorY + 30, mainCardW - 60, 45, 3, true);
-    
-    // 作者信息区域（带头像）
-    const authorY = cursorY + 30 + titleLines * 45 + 15;
-    const avatarSize = 36;
-    
-    // 绘制作者头像
+    ctx.restore();
+    ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 1;
+    roundRect(ctx, winX, winY, width - margin * 2, windowH, 16); ctx.stroke();
+
+    // 交通灯
+    ['#ff5f56', '#ffbd2e', '#27c93f'].forEach((c, i) => {
+        ctx.beginPath(); ctx.arc(winX + 25 + i * 25, winY + 25, 6, 0, Math.PI * 2); ctx.fillStyle = c; ctx.fill();
+    });
+
+    // --- 内容绘制 ---
+    let dy = winY + 60;
+    const cx = winX + winPadding;
+
+    // 1. Header
+    ctx.fillStyle = '#333'; ctx.font = `bold 32px "${font}"`; ctx.textBaseline = 'top';
+    const drawnTitleH = wrapText(ctx, title, cx, dy, contentW, 45, 5, true);
+    dy += drawnTitleH + 20;
+
+    // Meta Info
+    const avSize = 40;
     if (authorAvatar) {
         try {
-            const avImg = await loadImage(authorAvatar);
-            ctx.save();
-            ctx.beginPath();
-            ctx.arc(50 + avatarSize/2, authorY + avatarSize/2, avatarSize/2, 0, Math.PI * 2);
-            ctx.clip();
-            ctx.drawImage(avImg, 50, authorY, avatarSize, avatarSize);
-            ctx.restore();
-        } catch (e) {
-            // 绘制默认头像占位
-            ctx.fillStyle = '#e0e0e0';
-            ctx.beginPath();
-            ctx.arc(50 + avatarSize/2, authorY + avatarSize/2, avatarSize/2, 0, Math.PI * 2);
-            ctx.fill();
+            const img = await loadImage(authorAvatar);
+            ctx.save(); ctx.beginPath(); ctx.arc(cx + avSize/2, dy + avSize/2, avSize/2, 0, Math.PI*2); ctx.clip();
+            ctx.drawImage(img, cx, dy, avSize, avSize); ctx.restore();
+        } catch(e) {
+            ctx.fillStyle = '#ccc'; ctx.beginPath(); ctx.arc(cx + avSize/2, dy + avSize/2, avSize/2, 0, Math.PI*2); ctx.fill();
         }
     } else {
-        // 默认头像
-        ctx.fillStyle = '#e0e0e0';
-        ctx.beginPath();
-        ctx.arc(50 + avatarSize/2, authorY + avatarSize/2, avatarSize/2, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.fillStyle = '#ccc'; ctx.beginPath(); ctx.arc(cx + avSize/2, dy + avSize/2, avSize/2, 0, Math.PI*2); ctx.fill();
     }
-    
-    // 作者名称
-    ctx.fillStyle = '#3498db';
-    ctx.font = `bold 16px "${font}"`;
-    ctx.fillText(author, 50 + avatarSize + 12, authorY + 5);
-    
-    // 日期
-    ctx.fillStyle = '#999';
-    ctx.font = `12px "${font}"`;
-    ctx.fillText(date || '未知日期', 50 + avatarSize + 12, authorY + 24);
-    
-    // 右侧统计数据
-    ctx.textAlign = 'right';
-    const statsX = mainCardW;
-    ctx.font = `14px "${font}"`;
-    
-    // 浏览量
-    ctx.fillStyle = '#666';
-    ctx.fillText(`浏览 ${views}`, statsX, authorY + 5);
-    
-    // 推荐和收藏
-    ctx.fillStyle = '#e74c3c';
-    ctx.fillText(`推荐 ${pushNum}`, statsX - 100, authorY + 5);
-    ctx.fillStyle = '#f39c12';
-    ctx.fillText(`收藏 ${favNum}`, statsX - 200, authorY + 5);
-    
-    ctx.textAlign = 'left';
-    
-    cursorY += actualTitleH + 20;
 
-    // 2. 目录卡片
+    ctx.fillStyle = '#333'; ctx.font = `bold 16px "${font}"`;
+    ctx.fillText(author, cx + avSize + 15, dy + 5);
+    ctx.fillStyle = '#888'; ctx.font = `12px "${font}"`;
+    ctx.fillText(date || '未知日期', cx + avSize + 15, dy + 25);
+
+    // Stats
+    const statsY = dy + 10;
+    let sx = cx + contentW;
+    const drawStat = (icon, val, color) => {
+        ctx.textAlign = 'right';
+        ctx.fillStyle = color; ctx.font = `bold 16px "${font}"`;
+        const vw = ctx.measureText(val).width;
+        ctx.fillText(val, sx, statsY);
+        ctx.fillStyle = '#999'; ctx.font = `12px "${font}"`;
+        ctx.fillText(icon, sx - vw - 5, statsY);
+        sx -= (vw + 5 + ctx.measureText(icon).width + 20);
+        ctx.textAlign = 'left';
+    };
+    
+    drawStat('收藏', favNum, '#f1c40f');
+    drawStat('推荐', pushNum, '#e74c3c');
+    drawStat('浏览', views, '#3498db');
+
+    dy += avSize + 30;
+
+    // Divider
+    ctx.fillStyle = 'rgba(0,0,0,0.05)'; ctx.fillRect(cx, dy, contentW, 1);
+    dy += 25;
+
+    // 2. TOC
     if (tocItems.length > 0) {
-        const tocH = 60 + Math.ceil(tocItems.length / 2) * 30;
+        ctx.fillStyle = 'rgba(0,0,0,0.03)';
+        roundRect(ctx, cx, dy, contentW, tocH - 20, 10); ctx.fill();
+        ctx.fillStyle = '#555'; ctx.font = `bold 16px "${font}"`;
+        ctx.fillText('目录', cx + 20, dy + 30);
         
-        ctx.shadowColor = 'rgba(0,0,0,0.05)';
-        ctx.shadowBlur = 10;
-        ctx.fillStyle = '#fff';
-        roundRect(ctx, 20, cursorY, mainCardW, tocH, 16);
-        ctx.fill();
-        ctx.shadowBlur = 0;
-        
-        ctx.fillStyle = '#3498db';
-        ctx.fillRect(20, cursorY + 20, 4, 24);
-        
-        ctx.fillStyle = '#333';
-        ctx.font = `bold 18px "${font}"`;
-        ctx.fillText('目录导航', 35, cursorY + 22);
-        
-        ctx.fillStyle = '#555';
-        ctx.font = `14px "${font}"`;
-        const colW = (mainCardW - 60) / 2;
+        let tx = cx + 20; let ty = dy + 60;
+        const colW = (contentW - 40) / 2;
+        ctx.fillStyle = '#666'; ctx.font = `14px "${font}"`;
         tocItems.forEach((item, i) => {
-            const col = i % 2;
-            const row = Math.floor(i / 2);
-            const x = 50 + col * colW;
-            const y = cursorY + 60 + row * 30;
-            ctx.fillText(`${i+1}. ${item.substring(0, 25)}${item.length>25?'...':''}`, x, y);
+            const col = i % 2; 
+            if (col === 0 && i > 0) ty += 30;
+            const x = tx + col * colW;
+            let displayTitle = item;
+            if (ctx.measureText(displayTitle).width > colW - 20) {
+                while (ctx.measureText(displayTitle + '...').width > colW - 20 && displayTitle.length > 0) displayTitle = displayTitle.slice(0, -1);
+                displayTitle += '...';
+            }
+            ctx.fillText(`${i+1}. ${displayTitle}`, x, ty);
         });
-        
-        cursorY += tocH + 20;
+        dy += tocH + 10;
     }
 
-    // 3. 正文卡片
-    const contentStart = cursorY;
-    let contentDrawY = contentStart + 30;
-    const contentLeft = 50;
-    const contentW = mainCardW - 60;
-    
-    ctx.fillStyle = '#333';
-    
-    // 遍历所有节点
+    // 3. Content (Drawing loop)
     for (const node of contentNodes) {
-        if (contentDrawY > estimatedHeight - 50) break; // 防止溢出
-        
         if (node.type === 't') {
             const isHeader = node.tag === 'h';
             const fontSize = isHeader ? 22 : 16;
-            const lineHeight = Math.floor(fontSize * 1.6);
-            
             ctx.font = `${isHeader ? 'bold' : ''} ${fontSize}px "${font}"`;
             ctx.fillStyle = isHeader ? '#2c3e50' : '#444';
             
             if (isHeader) {
-                contentDrawY += 15;
-                ctx.fillStyle = '#3498db'; 
-                ctx.fillRect(contentLeft - 15, contentDrawY + 5, 4, 20);
+                ctx.fillStyle = '#3498db';
+                ctx.fillRect(cx - 15, dy + 5, 4, fontSize);
                 ctx.fillStyle = '#2c3e50';
             }
             
-            contentDrawY = wrapText(ctx, node.val, contentLeft, contentDrawY, contentW, lineHeight, 100, true) + (isHeader ? 15 : 10);
+            const lineHeight = Math.floor(fontSize * 1.6);
+            dy = wrapText(ctx, node.val, cx, dy, contentW, lineHeight, 10000, true) + (isHeader ? 20 : 15);
             
-        } else if (node.type === 'i') {
-            contentDrawY += 15;
-            try {
-                const img = await loadImage(node.src);
-                const maxW = contentW;
-                const maxH = 800; // 允许更高的图片
-                let dw = img.width;
-                let dh = img.height;
-                
-                if (dw > maxW) {
-                    const ratio = maxW / dw;
-                    dw = maxW;
-                    dh = dh * ratio;
-                }
-                if (dh > maxH) {
-                    const ratio = maxH / dh;
-                    dh = maxH;
-                    dw = dw * ratio;
-                }
-                
-                ctx.save();
-                ctx.shadowColor = 'rgba(0,0,0,0.1)';
-                ctx.shadowBlur = 8;
-                const dx = contentLeft + (contentW - dw) / 2;
-                ctx.drawImage(img, dx, contentDrawY, dw, dh);
-                ctx.restore();
-                
-                contentDrawY += dh + 25;
-            } catch (e) {}
+        } else if (node.type === 'i' && !node.error && node.img) {
+            // 绘制预加载的图片
+            // 居中显示
+            const dx = cx + (contentW - node.dw) / 2;
+            
+            ctx.save();
+            ctx.shadowColor = 'rgba(0,0,0,0.1)'; ctx.shadowBlur = 15; ctx.shadowOffsetY = 5;
+            // 绘制图片 (圆角效果)
+            roundRect(ctx, dx, dy, node.dw, node.dh, 8); 
+            ctx.shadowColor = 'transparent'; // clip 前清除阴影以免影响性能
+            ctx.clip();
+            ctx.drawImage(node.img, dx, dy, node.dw, node.dh);
+            ctx.restore();
+            
+            dy += node.dh + 25;
         }
     }
-    
-    const contentEnd = contentDrawY + 30;
-    const contentHeight = contentEnd - contentStart;
-    
-    // 绘制正文卡片背景
-    ctx.globalCompositeOperation = 'destination-over';
-    ctx.shadowColor = 'rgba(0,0,0,0.05)';
-    ctx.shadowBlur = 10;
-    ctx.fillStyle = '#fff';
-    roundRect(ctx, 20, contentStart, mainCardW, contentHeight, 16);
-    ctx.fill();
-    ctx.shadowBlur = 0;
-    ctx.globalCompositeOperation = 'source-over';
-    
-    cursorY = contentEnd + 20;
-    
-    // 底部版权
-    ctx.fillStyle = '#999';
-    ctx.font = `12px "${font}"`;
-    ctx.textAlign = 'center';
-    ctx.fillText('教程来源: mcmod.cn | Powered by Koishi', width / 2, cursorY);
-    
-    const finalH = cursorY + 30;
-    const finalCanvas = createCanvas(width, finalH);
-    finalCanvas.getContext('2d').drawImage(canvas, 0, 0, width, finalH, 0, 0, width, finalH);
-    
-    return finalCanvas.toBuffer('image/png');
-}
-async function drawAuthorCard(url) {
-    const uid = url.match(/author\/(\d+)/)?.[1] || 'Unknown';
-    
-    // 1. 获取数据
-    const res = await fetchWithTimeout(url, { headers: getHeaders() });
-    const html = await res.text();
-    const $ = cheerio.load(html);
 
-    const username = cleanText($('.author-name h5').text()) || $('title').text().split('-')[0].trim();
-    const subname = $('.author-name .subname p').map((i, el) => $(el).text().trim()).get().join(' / ');
-    const avatarUrl = fixUrl($('.author-user-avatar img').attr('src'));
-    const bio = cleanText($('.author-content .text').text()) || '（暂无简介）';
-    
-    // 统计数据
-    const pageInfo = {};
-    const fullText = $('body').text().replace(/\s+/g, ' '); 
-    
-    function extractStat(regex) {
-        const m = fullText.match(regex);
-        if (m && m[1] && m[1].length < 20) return m[1].trim();
-        return null;
-    }
-
-    pageInfo.views = extractStat(/浏览量[：:]\s*([\d,]+)/);
-    pageInfo.createDate = extractStat(/创建日期[：:]\s*(\d{4}-\d{2}-\d{2}|\d+年前|\d+个月前|\d+天前)/);
-    pageInfo.lastEdit = extractStat(/最后编辑[：:]\s*(\d{4}-\d{2}-\d{2}|\d+年前|\d+个月前|\d+天前)/);
-    pageInfo.editCount = extractStat(/编辑次数[：:]\s*(\d+)/);
-    
-    let favCount = '0';
-    const favEl = $('.author-fav .nums, .common-fuc-group li.like .nums, .fav-count');
-    if (favEl.length) {
-        favCount = favEl.attr('title') || favEl.text().trim() || '0';
-    }
-    if (favCount === '0') {
-        const favMatch = fullText.match(/收藏\s*(\d+)/);
-        if (favMatch) favCount = favMatch[1];
-    }
-
-    const stats = [];
-    if (pageInfo.views) stats.push({ l: '浏览量', v: pageInfo.views });
-    if (pageInfo.createDate) stats.push({ l: '创建日期', v: pageInfo.createDate });
-    if (pageInfo.lastEdit) stats.push({ l: '最后编辑', v: pageInfo.lastEdit });
-    if (pageInfo.editCount) stats.push({ l: '编辑次数', v: pageInfo.editCount });
-    if (favCount) stats.push({ l: '收藏', v: favCount });
-
-    const links = [];
-    $('.author-link .common-link-icon-list a, .common-link-icon-frame a').each((i, el) => {
-        const h = $(el).attr('href');
-        let n = $(el).attr('data-original-title') || $(el).text().trim();
-        if (!n && h) {
-            if(h.includes('github')) n='GitHub'; 
-            else if(h.includes('bilibili')) n='Bilibili';
-            else if(h.includes('curseforge')) n='CurseForge';
-            else if(h.includes('modrinth')) n='Modrinth';
-            else if(h.includes('mcbbs')) n='MCBBS';
-            else n='Link';
-        }
-        if (n && h && !links.some(l => l.n === n)) links.push({ n, h });
-    });
-
-    // 列表抓取 - 优先使用特定类名，因为它们更稳定
-    const teams = [];
-    const projects = [];
-    const partners = [];
-
-    // 辅助函数：从容器中提取列表项
-    function extractListItems(container, targetList, isProject = false) {
-        // 增加 .block 选择器以匹配 div.block (用于参与项目)
-        container.find('li.block, .block, .row > div').each((i, el) => {
-            const n = cleanText($(el).find('.name a, .name, h4').first().text());
-            if (!n) return;
-            const m = fixUrl($(el).find('img').attr('src'));
-            // 增加 .count 选择器 (用于相关作者的合作次数)
-            const r = cleanText($(el).find('.position, .meta, .count').text());
-            // 获取类型标签 (模组/整合包等)
-            let t = '';
-            if (isProject) {
-                const badge = $(el).find('.badge, .badge-mod, .badge-modpack').first().text().trim();
-                if (badge) t = badge;
-            }
-            if (!targetList.some(x => x.n === n)) {
-                targetList.push({ n, m, r, t });
-            }
-        });
-    }
-
-    // 1. 尝试特定类名 (根据用户提供的 HTML 结构修正)
-    extractListItems($('.author-member .list, .author-team .list'), teams, false);
-    extractListItems($('.author-mods .list'), projects, true);
-    extractListItems($('.author-partner .list, .author-users .list'), partners, false);
-
-    // 2. 如果没抓到，尝试通用抓取 (遍历所有 block/panel)
-    if (teams.length === 0 || projects.length === 0 || partners.length === 0) {
-        $('.common-card-layout, .panel, .block').each((i, el) => {
-            const title = $(el).find('.head, .panel-heading, h3, h4').text().trim();
-            if (teams.length === 0 && title.includes('参与团队')) extractListItems($(el), teams);
-            if (projects.length === 0 && (title.includes('参与项目') || title.includes('发布的模组'))) extractListItems($(el), projects);
-            if (partners.length === 0 && (title.includes('相关作者') || title.includes('合作者'))) extractListItems($(el), partners);
-        });
-    }
-
-    // 2. 布局计算
-    const width = 800;
-    const font = GLOBAL_FONT_FAMILY;
-    const padding = 40;
-    const windowMargin = 20;
-    const contentW = width - windowMargin*2 - padding*2; // 实际内容宽度
-    
-    // 严格计算高度
-    let cursorY = 60; // Initial padding inside window
-    
-    // Avatar area
-    cursorY += 100 + 40; // Avatar(100) + gap(40)
-    
-    // Stats Grid
-    if (stats.length > 0) {
-        cursorY += 80 + 30; // StatH(80) + gap(30)
-    }
-    
-    // Links
-    if (links.length > 0) {
-        // Simulate link wrapping
-        const tempC = createCanvas(100,100);
-        const tempCtx = tempC.getContext('2d');
-        tempCtx.font = `bold 14px "${font}"`;
-        
-        let lx = 0;
-        let ly = 0;
-        let rowH = 34;
-        
-        links.forEach(l => {
-            const lw = tempCtx.measureText(l.n).width + 30;
-            if (lx + lw > contentW) {
-                lx = 0;
-                ly += 45; // Line gap
-            }
-            lx += lw + 10;
-        });
-        cursorY += ly + rowH + 60; // + gap
-    }
-    
-    // Lists Calculation Helper
-    function calcSectionHeight(items, itemH, cols) {
-        if (!items.length) return 0;
-        const rows = Math.ceil(items.length / cols);
-        // Title(35) + Rows * (ItemH + 15) + BottomGap(30)
-        return 35 + rows * (itemH + 15) + 30;
-    }
-    
-    cursorY += calcSectionHeight(teams, 70, 3);
-    cursorY += calcSectionHeight(projects, 90, 2);
-    cursorY += calcSectionHeight(partners, 100, 5);
-    
-    // Bio
-    let bioH = 0;
-    if (bio && bio !== '（暂无简介）') {
-        const tempC = createCanvas(100,100);
-        const tempCtx = tempC.getContext('2d');
-        tempCtx.font = `16px "${font}"`;
-        // Title(35)
-        cursorY += 35;
-        // Content
-        bioH = wrapText(tempCtx, bio, 0, 0, contentW - 40, 26, 1000, false);
-        cursorY += bioH + 40 + 60; // Padding inside rect(40) + BottomGap(60)
-    }
-    
     // Footer
-    cursorY += 30;
-    
-    const windowH = cursorY;
-    const totalH = windowH + windowMargin*2;
-
-    const canvas = createCanvas(width, totalH);
-    const ctx = canvas.getContext('2d');
-    
-    // 3. 绘制背景 (使用微软 Bing 每日图片/自然风格)
-    try {
-        // 使用 Bing 每日图片 API (1920x1080)
-        const bgUrl = 'https://bing.biturl.top/?resolution=1920&format=image&index=0&mkt=zh-CN';
-        const bgImg = await loadImage(bgUrl);
-        
-        // 保持比例填充
-        const r = Math.max(width / bgImg.width, totalH / bgImg.height);
-        const dw = bgImg.width * r;
-        const dh = bgImg.height * r;
-        const dx = (width - dw) / 2;
-        const dy = (totalH - dh) / 2;
-        
-        ctx.drawImage(bgImg, dx, dy, dw, dh);
-        
-        // 叠加一层模糊遮罩或颜色，保证文字可读性 (虽然有亚克力板，但背景太花也不好)
-        // 这里不模糊背景本身（Canvas模糊开销大），而是加一层半透明遮罩
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.1)';
-        ctx.fillRect(0, 0, width, totalH);
-        
-    } catch (e) {
-        // 失败回退到渐变
-        const grad = ctx.createLinearGradient(0, 0, width, totalH);
-        grad.addColorStop(0, '#a18cd1');
-        grad.addColorStop(1, '#fbc2eb');
-        ctx.fillStyle = grad;
-        ctx.fillRect(0, 0, width, totalH);
-    }
-    
-    // 4. 绘制 Acrylic 窗口
-    const windowW = width - windowMargin*2;
-    
-    ctx.save();
-    // 窗口阴影
-    ctx.shadowColor = 'rgba(0,0,0,0.3)';
-    ctx.shadowBlur = 40;
-    ctx.shadowOffsetY = 20;
-    
-    // 窗口背景 (40% Acrylic - 模拟)
-    // 使用白色半透明 + 背景模糊效果 (Canvas 无法直接 backdrop-filter，只能通过叠加半透明白)
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.75)'; // 提高不透明度以遮盖背景杂乱
-    roundRect(ctx, windowMargin, windowMargin, windowW, windowH, 20);
-    ctx.fill();
-    ctx.restore();
-    
-    // 窗口边框
-    ctx.strokeStyle = 'rgba(255,255,255,0.6)';
-    ctx.lineWidth = 1.5;
-    roundRect(ctx, windowMargin, windowMargin, windowW, windowH, 20);
-    ctx.stroke();
-    
-    // 5. 窗口控件 (Traffic Lights)
-    const controlY = windowMargin + 20;
-    const controlX = windowMargin + 20;
-    const controlR = 6;
-    const controlGap = 20;
-    
-    ctx.fillStyle = '#ff5f56'; // Red
-    ctx.beginPath(); ctx.arc(controlX, controlY, controlR, 0, Math.PI*2); ctx.fill();
-    ctx.fillStyle = '#ffbd2e'; // Yellow
-    ctx.beginPath(); ctx.arc(controlX + controlGap, controlY, controlR, 0, Math.PI*2); ctx.fill();
-    ctx.fillStyle = '#27c93f'; // Green
-    ctx.beginPath(); ctx.arc(controlX + controlGap*2, controlY, controlR, 0, Math.PI*2); ctx.fill();
-    
-    // 6. 内容绘制
-    // 重置 cursorY 到窗口内部起始位置
-    cursorY = windowMargin + 60;
-    const contentX = windowMargin + padding;
-    
-    // Header: Avatar & Name
-    const avatarSize = 100;
-    
-    // Avatar
-    ctx.save();
-    ctx.shadowColor = 'rgba(0,0,0,0.1)';
-    ctx.shadowBlur = 10;
-    ctx.beginPath();
-    ctx.arc(contentX + avatarSize/2, cursorY + avatarSize/2, avatarSize/2, 0, Math.PI*2);
-    ctx.fillStyle = '#fff';
-    ctx.fill();
-    ctx.shadowBlur = 0;
-    ctx.clip();
-    
-    if (avatarUrl) {
-        try {
-            const img = await loadImage(avatarUrl);
-            ctx.drawImage(img, contentX, cursorY, avatarSize, avatarSize);
-        } catch(e) {
-            ctx.fillStyle = '#ddd'; ctx.fill();
-        }
-    } else {
-        ctx.fillStyle = '#ddd'; ctx.fill();
-    }
-    ctx.restore();
-    
-    // Name & UID
-    const textX = contentX + avatarSize + 30;
-    ctx.fillStyle = '#333';
-    ctx.font = `bold 40px "${font}"`;
-    ctx.textBaseline = 'top';
-    ctx.fillText(username, textX, cursorY + 10);
-    
-    // UID Chip
-    const uidText = `UID: ${uid}`;
-    ctx.font = `bold 14px "${font}"`;
-    const uidW = ctx.measureText(uidText).width + 20;
-    ctx.fillStyle = 'rgba(0,0,0,0.05)';
-    roundRect(ctx, textX, cursorY + 60, uidW, 24, 12);
-    ctx.fill();
-    ctx.fillStyle = '#666';
-    ctx.fillText(uidText, textX + 10, cursorY + 64);
-
-    // Subname (Alias)
-    if (subname) {
-        ctx.fillStyle = '#999';
-        ctx.font = `14px "${font}"`;
-        // 绘制在 UID 下方，稍微留点间距
-        ctx.fillText(subname, textX, cursorY + 95);
-    }
-    
-    cursorY += avatarSize + 40;
-    
-    // Stats Grid
-    if (stats.length > 0) {
-        const statW = (contentW - (stats.length-1)*15) / stats.length;
-        const statH = 80;
-        
-        stats.forEach((s, i) => {
-            const sx = contentX + i * (statW + 15);
-            
-            // Card bg
-            ctx.fillStyle = 'rgba(255,255,255,0.6)';
-            roundRect(ctx, sx, cursorY, statW, statH, 12);
-            ctx.fill();
-            
-            // Label
-            ctx.textAlign = 'center';
-            ctx.fillStyle = '#666';
-            ctx.font = `14px "${font}"`;
-            ctx.fillText(s.l, sx + statW/2, cursorY + 15);
-            
-            // Value
-            ctx.fillStyle = '#333';
-            ctx.font = `bold 20px "${font}"`;
-            // Auto scale font if too long
-            let fontSize = 20;
-            while (ctx.measureText(s.v).width > statW - 10 && fontSize > 10) {
-                fontSize--;
-                ctx.font = `bold ${fontSize}px "${font}"`;
-            }
-            ctx.fillText(s.v, sx + statW/2, cursorY + 45);
-        });
-        ctx.textAlign = 'left';
-        cursorY += statH + 30;
-    }
-    
-    // Links
-    if (links.length > 0) {
-        let lx = contentX;
-        let ly = cursorY;
-        links.forEach(l => {
-            ctx.font = `bold 14px "${font}"`;
-            const lw = ctx.measureText(l.n).width + 30;
-            if (lx + lw > contentX + contentW) {
-                lx = contentX;
-                ly += 45;
-            }
-            
-            ctx.fillStyle = '#fff';
-            ctx.shadowColor = 'rgba(0,0,0,0.05)';
-            ctx.shadowBlur = 5;
-            roundRect(ctx, lx, ly, lw, 34, 17);
-            ctx.fill();
-            ctx.shadowBlur = 0;
-            
-            ctx.fillStyle = '#333';
-            ctx.fillText(l.n, lx + 15, ly + 8);
-            
-            lx += lw + 10;
-        });
-        cursorY = ly + 60;
-    }
-    
-    // Helper for Lists
-    async function drawSection(title, items, itemH, cols, renderItem) {
-        if (!items.length) return;
-        
-        ctx.fillStyle = '#333';
-        ctx.font = `bold 22px "${font}"`;
-        ctx.fillText(title, contentX, cursorY);
-        cursorY += 35;
-        
-        const itemW = (contentW - (cols-1)*15) / cols;
-        
-        for (let i = 0; i < items.length; i++) {
-            const col = i % cols;
-            const row = Math.floor(i / cols);
-            const ix = contentX + col * (itemW + 15);
-            const iy = cursorY + row * (itemH + 15);
-            
-            // Item Card
-            ctx.fillStyle = 'rgba(255,255,255,0.7)';
-            roundRect(ctx, ix, iy, itemW, itemH, 12);
-            ctx.fill();
-            
-            await renderItem(items[i], ix, iy, itemW, itemH);
-        }
-        
-        cursorY += Math.ceil(items.length / cols) * (itemH + 15) + 30;
-    }
-    
-    // Draw Lists
-    await drawSection('参与团队', teams, 70, 3, async (item, x, y, w, h) => {
-        if (item.m) {
-            try {
-                const img = await loadImage(item.m);
-                ctx.drawImage(img, x + 10, y + 15, 40, 40);
-            } catch(e) {}
-        }
-        ctx.fillStyle = '#333'; ctx.font = `bold 16px "${font}"`;
-        ctx.fillText(item.n, x + 60, y + 15);
-        if (item.r) {
-            ctx.fillStyle = '#666'; ctx.font = `12px "${font}"`;
-            ctx.fillText(item.r, x + 60, y + 40);
-        }
-    });
-    
-    await drawSection('参与项目', projects, 90, 2, async (item, x, y, w, h) => {
-        if (item.m) {
-            try {
-                const img = await loadImage(item.m);
-                ctx.drawImage(img, x + 10, y + 15, 100, 60);
-            } catch(e) {}
-        }
-        
-        // 绘制类型标签 (模组/整合包)
-        let nameOffsetX = 120;
-        if (item.t) {
-            ctx.font = `bold 12px "${font}"`;
-            const tagText = item.t;
-            const tagW = ctx.measureText(tagText).width + 12;
-            const tagH = 20;
-            const tagX = x + 120;
-            const tagY = y + 12;
-            
-            // 根据类型设置颜色：模组=绿色，整合包=橙色，其他=灰色
-            let tagBg = '#999';
-            if (tagText.includes('模组')) tagBg = '#2ecc71';
-            else if (tagText.includes('整合包')) tagBg = '#e67e22';
-            else if (tagText.includes('资料')) tagBg = '#3498db';
-            
-            ctx.fillStyle = tagBg;
-            roundRect(ctx, tagX, tagY, tagW, tagH, 4);
-            ctx.fill();
-            
-            ctx.fillStyle = '#fff';
-            ctx.fillText(tagText, tagX + 6, tagY + 4);
-            
-            nameOffsetX = 120 + tagW + 8;
-        }
-        
-        // 去掉名称中的类型前缀（避免与标签重复）
-        let displayName = item.n;
-        if (item.t) {
-            // 移除开头的 "模组"、"整合包" 等前缀
-            displayName = displayName.replace(/^(模组|整合包|资料)\s*/g, '').trim();
-        }
-        
-        ctx.fillStyle = '#333'; ctx.font = `bold 16px "${font}"`;
-        wrapText(ctx, displayName, x + nameOffsetX, y + 15, w - nameOffsetX - 10, 20, 2, true);
-        if (item.r) {
-            ctx.fillStyle = '#666'; ctx.font = `12px "${font}"`;
-            ctx.fillText(item.r, x + 120, y + 60);
-        }
-    });
-
-    await drawSection('相关作者', partners, 100, 5, async (item, x, y, w, h) => {
-        const iconSize = 50;
-        if (item.m) {
-            try {
-                const img = await loadImage(item.m);
-                ctx.save();
-                ctx.beginPath(); ctx.arc(x + w/2, y + 25, iconSize/2, 0, Math.PI*2); ctx.clip();
-                ctx.drawImage(img, x + w/2 - iconSize/2, y, iconSize, iconSize);
-                ctx.restore();
-            } catch(e) {}
-        }
-        ctx.textAlign = 'center';
-        ctx.fillStyle = '#333'; ctx.font = `14px "${font}"`;
-        wrapText(ctx, item.n, x + w/2, y + 60, w - 10, 18, 2, true);
-        ctx.textAlign = 'left';
-    });
-    
-    // Bio
-    if (bio && bio !== '（暂无简介）') {
-        ctx.fillStyle = '#333';
-        ctx.font = `bold 22px "${font}"`;
-        ctx.fillText('简介', contentX, cursorY);
-        cursorY += 35;
-        
-        ctx.fillStyle = 'rgba(255,255,255,0.5)';
-        
-        roundRect(ctx, contentX, cursorY, contentW, bioH + 40, 12);
-        ctx.fill();
-        
-        ctx.fillStyle = '#444';
-        ctx.font = `16px "${font}"`;
-        wrapText(ctx, bio, contentX + 20, cursorY + 20, contentW - 40, 26, 1000, true);
-        
-        cursorY += bioH + 60;
-    }
-    
-    // Footer
-    ctx.fillStyle = 'rgba(0,0,0,0.5)';
-    ctx.font = `12px "${font}"`;
-    ctx.textAlign = 'center';
-    ctx.fillText('mcmod.cn | Powered by Koishi', width/2, totalH - 15);
+    dy += 30;
+    ctx.fillStyle = '#aaa'; ctx.font = `12px "${font}"`; ctx.textAlign = 'center';
+    ctx.fillText('mcmod.cn | Powered by Koishi', width / 2, canvasH - 15);
 
     return canvas.toBuffer('image/png');
 }
@@ -1931,34 +1413,257 @@ async function drawCenterCardImpl(uid, logger) {
 }
 
 // ================= 详情页卡片 =================
+// ================= 详情页卡片 (资料/物品/通用) =================
+// ================= 详情页卡片 (资料/物品/通用) - 深度解析版 =================
 async function createInfoCard(url, type) {
-  const res = await fetchWithTimeout(url, { headers: getHeaders('https://search.mcmod.cn/') });
-  const $ = cheerio.load(await res.text());
-  const title = cleanText($('.item-title, .class-title, h1').first().text());
-  const modName = cleanText($('.breadcrumb li').eq(1).text() || $('.class-relation-list a').first().text());
-  let imgUrl = fixUrl($('.item-icon img, .mod-icon img').attr('src') || $('meta[property="og:image"]').attr('content'));
-  let desc = cleanText($('.item-desc, .common-text').first().text() || $('meta[name="description"]').attr('content'));
-  if (desc.length > 300) desc = desc.substring(0, 300) + '...';
-  const width = 700, height = 350;
-  const canvas = createCanvas(width, height);
-  const ctx = canvas.getContext('2d');
-  const font = GLOBAL_FONT_FAMILY;
-  ctx.fillStyle = '#f9f9f9'; ctx.fillRect(0, 0, width, height);
-  let textX = 30, textY = 30;
-  let imgObj = null;
-  if (imgUrl) { try { imgObj = await loadImage(imgUrl); } catch (e) {} }
-  if (imgObj) {
-      if (imgObj.width === imgObj.height || imgObj.width < 150) { ctx.drawImage(imgObj, 30, 30, 100, 100); textX = 150; } 
-      else { ctx.drawImage(imgObj, 0, 0, width, 200); textY = 210; }
-  }
-  let titleY = (imgObj && textX === 150) ? 30 : textY;
-  ctx.textBaseline = 'top'; ctx.fillStyle = '#000'; ctx.font = `bold 30px "${font}"`; ctx.fillText(title, textX, titleY);
-  if (modName) { ctx.fillStyle = '#666'; ctx.font = `16px "${font}"`; ctx.fillText(`所属: ${modName}`, textX, titleY + 40); }
-  let lineY = (imgObj && textX === 150) ? 140 : titleY + 50;
-  ctx.strokeStyle = '#ddd'; ctx.beginPath(); ctx.moveTo(30, lineY); ctx.lineTo(width-30, lineY); ctx.stroke();
-  ctx.fillStyle = '#333'; ctx.font = `18px "${font}"`; wrapText(ctx, desc || '暂无简介', 30, lineY + 20, width - 60, 28, 6);
-  ctx.fillStyle = '#aaa'; ctx.font = `12px "${font}"`; ctx.fillText('数据来源: mcmod.cn', 30, height - 20);
-  return canvas.toBuffer('image/png');
+    // 1. 获取并解析页面
+    const res = await fetchWithTimeout(url, { headers: getHeaders('https://search.mcmod.cn/') });
+    const html = await res.text();
+    const $ = cheerio.load(html);
+
+    // --- 基础信息 ---
+    // 标题：尝试从 .itemname 或 h3 获取
+    let title = cleanText($('.itemname .name h5, .itemname .name').first().text());
+    if (!title) title = cleanText($('title').text().split('-')[0].trim());
+    
+    // 来源/模组：面包屑导航倒数第三个通常是模组名
+    let source = cleanText($('.common-nav .item').eq(1).text()); 
+    // 或者尝试从 nav 链接判断
+    if (!source) source = cleanText($('.common-nav li a[href*="/class/"]').last().text());
+
+    // 图标：优先获取高清大图 (128x128)，其次普通图标
+    let imgUrl = fixUrl($('.item-info-table img[width="128"]').attr('src'));
+    if (!imgUrl) imgUrl = fixUrl($('.item-info-table img').first().attr('src'));
+    if (!imgUrl) imgUrl = fixUrl($('.common-icon-text-frame img').attr('src'));
+
+    // --- 属性列表 ---
+    const props = [];
+    
+    // 1. 抓取右侧/下方的表格数据 (.item-data table, .item-info-table table)
+    // 排除包含图片的行，只抓取文字属性
+    $('table.table-bordered tr').each((i, tr) => {
+        const tds = $(tr).find('td');
+        if (tds.length >= 2) {
+            // 可能是 <th>key</th><td>value</td> 或者 <td>key</td><td>value</td>
+            let key = cleanText($(tds[0]).text()).replace(/[:：]/g, '');
+            let val = cleanText($(tds[1]).text());
+            
+            // 过滤无效行 (如图标行)
+            if (key && val && val.length > 0 && !$(tds[1]).find('img').length) {
+                // 排除重复
+                if (!props.some(p => p.l === key)) {
+                    props.push({ l: key, v: val });
+                }
+            }
+        }
+    });
+
+    // --- 简介 ---
+    // 优先 .item-content，其次 meta description
+    let desc = '';
+    const contentDiv = $('.item-content.common-text').first();
+    if (contentDiv.length) {
+        desc = cleanText(contentDiv.text());
+    } else {
+        desc = $('meta[name="description"]').attr('content') || '暂无简介';
+    }
+    // 清理 "MCmod does not have a description..." 等默认文本
+    if (desc.includes('MCmod does not have a description')) desc = '暂无简介';
+
+    // --- 相关物品 (新增) ---
+    const relations = [];
+    $('.common-imglist-block .common-imglist li').each((i, el) => {
+        if (i >= 7) return; // 最多显示7个
+        const name = $(el).attr('data-original-title') || cleanText($(el).find('.text').text());
+        const icon = fixUrl($(el).find('img').attr('src'));
+        if (name && icon) relations.push({ n: name, i: icon });
+    });
+
+    // ================= 绘图逻辑 =================
+    const width = 800;
+    const font = GLOBAL_FONT_FAMILY;
+    const margin = 20;
+    const winPadding = 30;
+    const contentW = width - margin * 2 - winPadding * 2;
+
+    const dummyC = createCanvas(100, 100);
+    const dummy = dummyC.getContext('2d');
+    dummy.font = `bold 32px "${font}"`;
+
+    // 1. 高度计算
+    // Header (Title + Source)
+    let headerH = 60; 
+    if (source) headerH += 30;
+    
+    // Content Layout: Left (Icon + Props) | Right (Desc)
+    const iconSize = 100;
+    const leftColW = 240; // 左侧宽度
+    const rightColW = contentW - leftColW - 20; // 右侧宽度
+
+    // Props Height
+    let propsH = 0;
+    if (props.length) {
+        propsH = props.length * 28 + 20;
+    }
+    const leftH = iconSize + 20 + propsH;
+
+    // Desc Height
+    dummy.font = `16px "${font}"`;
+    const descLines = wrapText(dummy, desc, 0, 0, rightColW, 26, 30, false) / 26;
+    const descH = 40 + descLines * 26; // Title + Text
+
+    // Relations Height
+    let relH = 0;
+    if (relations.length) {
+        relH = 90; // Title + Icons
+    }
+
+    // Main Content Height (取左右最大值)
+    let mainH = Math.max(leftH, descH);
+    
+    // Total Layout
+    let cursorY = margin + 50; // Top traffic lights
+    const gap = 20;
+
+    cursorY += headerH + gap;
+    cursorY += mainH + gap;
+    if (relH) cursorY += relH + gap;
+
+    const windowH = cursorY;
+    const totalH = windowH + margin * 2;
+
+    // 2. 绘制背景与窗口
+    const canvas = createCanvas(width, totalH);
+    const ctx = canvas.getContext('2d');
+
+    // 背景 (Bing)
+    try {
+        const bgUrl = 'https://bing.biturl.top/?resolution=1920&format=image&index=0&mkt=zh-CN';
+        const bgImg = await loadImage(bgUrl);
+        const r = Math.max(width / bgImg.width, totalH / bgImg.height);
+        ctx.drawImage(bgImg, (width - bgImg.width * r) / 2, (totalH - bgImg.height * r) / 2, bgImg.width * r, bgImg.height * r);
+        ctx.fillStyle = 'rgba(0,0,0,0.1)'; ctx.fillRect(0, 0, width, totalH);
+    } catch (e) {
+        const grad = ctx.createLinearGradient(0, 0, 0, totalH);
+        grad.addColorStop(0, '#e6dee9'); grad.addColorStop(1, '#dad4ec'); // 柔和紫灰
+        ctx.fillStyle = grad; ctx.fillRect(0, 0, width, totalH);
+    }
+
+    // 窗口 (Acrylic)
+    const winX = margin, winY = margin;
+    ctx.save();
+    ctx.shadowColor = 'rgba(0,0,0,0.2)'; ctx.shadowBlur = 40; ctx.shadowOffsetY = 20;
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+    roundRect(ctx, winX, winY, width - margin * 2, windowH, 16);
+    ctx.fill();
+    ctx.restore();
+    ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth = 1;
+    roundRect(ctx, winX, winY, width - margin * 2, windowH, 16); ctx.stroke();
+
+    // 交通灯
+    ['#ff5f56', '#ffbd2e', '#27c93f'].forEach((c, i) => {
+        ctx.beginPath(); ctx.arc(winX + 20 + i * 25, winY + 20, 6, 0, Math.PI * 2); ctx.fillStyle = c; ctx.fill();
+    });
+
+    // --- 内容绘制 ---
+    let dy = winY + 50;
+    const cx = winX + winPadding;
+
+    // 1. Header
+    ctx.fillStyle = '#333'; ctx.font = `bold 32px "${font}"`; ctx.textBaseline = 'top';
+    ctx.fillText(title, cx, dy);
+    
+    if (source) {
+        ctx.fillStyle = '#888'; ctx.font = `bold 16px "${font}"`;
+        // 绘制所属模组标签
+        const tagW = ctx.measureText(source).width + 16;
+        ctx.fillStyle = '#f0f0f0'; roundRect(ctx, cx, dy + 45, tagW, 26, 6); ctx.fill();
+        ctx.fillStyle = '#666'; ctx.fillText(source, cx + 8, dy + 49);
+    }
+    dy += headerH + gap;
+
+    // 2. Left Column (Icon + Props)
+    const leftX = cx;
+    let leftY = dy;
+    
+    // Icon
+    if (imgUrl) {
+        try {
+            const img = await loadImage(imgUrl);
+            // 保持比例绘制在 100x100 区域居中
+            const r = Math.min(iconSize / img.width, iconSize / img.height);
+            const dw = img.width * r, dh = img.height * r;
+            ctx.drawImage(img, leftX + (iconSize - dw) / 2, leftY + (iconSize - dh) / 2, dw, dh);
+        } catch(e) {
+            ctx.fillStyle = '#eee'; roundRect(ctx, leftX, leftY, iconSize, iconSize, 12); ctx.fill();
+        }
+    }
+    leftY += iconSize + 20;
+
+    // Props
+    if (props.length) {
+        props.forEach(p => {
+            ctx.fillStyle = '#999'; ctx.font = `12px "${font}"`;
+            ctx.fillText(p.l, leftX, leftY);
+            
+            ctx.fillStyle = '#333'; ctx.font = `bold 14px "${font}"`;
+            let v = p.v;
+            if (v.length > 20) v = v.substring(0, 18) + '...';
+            ctx.fillText(v, leftX, leftY + 16);
+            
+            leftY += 38;
+        });
+    }
+
+    // 3. Right Column (Description)
+    const rightX = cx + leftColW + 20;
+    let rightY = dy;
+
+    ctx.fillStyle = '#333'; ctx.font = `bold 20px "${font}"`; ctx.fillText('简介', rightX, rightY);
+    ctx.fillStyle = '#3498db'; ctx.fillRect(rightX, rightY + 25, 30, 4);
+    rightY += 40;
+
+    ctx.fillStyle = '#555'; ctx.font = `16px "${font}"`;
+    wrapText(ctx, desc, rightX, rightY, rightColW, 26, 30, true);
+    
+    // 更新 dy 到主内容下方
+    dy += mainH + gap;
+
+    // 4. Relations (Bottom)
+    if (relations.length) {
+        // 分割线
+        ctx.strokeStyle = '#eee'; ctx.lineWidth = 1; 
+        ctx.beginPath(); ctx.moveTo(cx, dy); ctx.lineTo(cx + contentW, dy); ctx.stroke();
+        dy += 20;
+
+        ctx.fillStyle = '#333'; ctx.font = `bold 18px "${font}"`; 
+        ctx.fillText('相关物品', cx, dy);
+        
+        let rx = cx + 90;
+        const rIconSize = 32;
+        
+        for (const r of relations) {
+            try {
+                const img = await loadImage(r.i);
+                ctx.drawImage(img, rx, dy - 5, rIconSize, rIconSize);
+            } catch(e) {
+                ctx.fillStyle = '#eee'; ctx.fillRect(rx, dy - 5, rIconSize, rIconSize);
+            }
+            
+            // 简单显示名字 tooltip 效果不太好做，这里只画图标，或者简单的名字
+            // 为了美观，这里只画图标，名字太长会乱
+            // ctx.fillStyle = '#666'; ctx.font = `10px "${font}"`; 
+            // ctx.fillText(r.n.substring(0, 5), rx, dy + 40);
+
+            rx += rIconSize + 15;
+        }
+    }
+
+    // Footer
+    ctx.fillStyle = '#aaa'; ctx.font = `12px "${font}"`; ctx.textAlign = 'center';
+    ctx.fillText('mcmod.cn | Powered by Koishi', width / 2, totalH - 15);
+
+    return canvas.toBuffer('image/png');
 }
 
 // ================= Koishi =================
@@ -1987,7 +1692,6 @@ module.exports.apply = function (ctx, config) {
     globalCookie = config.cookie;
     logger.info('使用手动配置的 Cookie');
   } else if (config.autoCookie && cookieManager) {
-    // 异步初始化自动 Cookie
     cookieManager.getCookie().then(cookie => {
       if (cookie) {
         globalCookie = cookie;
@@ -2005,6 +1709,18 @@ module.exports.apply = function (ctx, config) {
     searchStates.delete(cid);
   }
 
+  // 辅助：尝试撤回消息
+  async function tryWithdraw(session, messageIds) {
+    if (!messageIds || !messageIds.length) return;
+    try {
+        for (const id of messageIds) {
+            await session.bot.deleteMessage(session.channelId, id);
+        }
+    } catch (e) {
+        // 忽略权限不足或不支持的情况
+    }
+  }
+
   for (const [type, aliases] of Object.entries(config.commands)) {
     const triggers = Array.isArray(aliases) ? aliases : [aliases];
     triggers.forEach(trigger => {
@@ -2016,7 +1732,7 @@ module.exports.apply = function (ctx, config) {
                 const results = await fetchSearch(keyword, type);
                 if (!results.length) return '未找到相关结果。';
                 
-                // 如果只有1个结果，直接显示卡片
+                // 如果只有1个结果，直接显示卡片（保持原样）
                 if (results.length === 1) {
                     const item = results[0];
                     await ensureValidCookie();
@@ -2049,9 +1765,19 @@ module.exports.apply = function (ctx, config) {
                     return;
                 }
                 
+                // 多结果：发送列表并记录消息 ID
                 clearState(session.cid);
-                searchStates.set(session.cid, { type, results, pageIndex: 0, timer: setTimeout(() => searchStates.delete(session.cid), TIMEOUT_MS) });
-                return formatListPage(results, 0, type);
+                const listText = formatListPage(results, 0, type);
+                const sentMessageIds = await session.send(listText);
+                
+                searchStates.set(session.cid, { 
+                    type, 
+                    results, 
+                    pageIndex: 0, 
+                    messageIds: sentMessageIds, // 记录 ID 以便撤回
+                    timer: setTimeout(() => searchStates.delete(session.cid), TIMEOUT_MS) 
+                });
+                return;
              } catch (e) {
                 logger.error(e); return `错误: ${e.message}`;
              }
@@ -2063,43 +1789,53 @@ module.exports.apply = function (ctx, config) {
     const state = searchStates.get(session.cid);
     if (!state) return next();
     const input = session.content.trim().toLowerCase();
+    
     if (input === 'q' || input === '退出') {
         clearState(session.cid);
         await session.send('已退出。');
         return;
     }
+    
     if (input === 'p' || input === 'n') {
         clearTimeout(state.timer);
         state.timer = setTimeout(() => searchStates.delete(session.cid), TIMEOUT_MS);
         const total = Math.ceil(state.results.length / PAGE_SIZE);
-        if (input === 'n' && state.pageIndex < total - 1) state.pageIndex++;
-        else if (input === 'p' && state.pageIndex > 0) state.pageIndex--;
+        
+        let newIndex = state.pageIndex;
+        if (input === 'n' && state.pageIndex < total - 1) newIndex++;
+        else if (input === 'p' && state.pageIndex > 0) newIndex--;
         else {
             await session.send('没有更多页面了。');
             return;
         }
-        await session.send(formatListPage(state.results, state.pageIndex, state.type));
+
+        // 翻页时发送新列表，并更新 messageIds
+        // (可选：如果你希望翻页时把上一页也撤回，可以在这里调用 tryWithdraw(session, state.messageIds))
+        state.pageIndex = newIndex;
+        const newMsgIds = await session.send(formatListPage(state.results, state.pageIndex, state.type));
+        state.messageIds = newMsgIds; // 更新为最新页面的 ID
         return;
     }
+    
     const choice = parseInt(input);
     if (!isNaN(choice) && choice >= 1) {
-        // 用户输入的是显示的序号（从1开始），直接转换为数组索引
         const idx = choice - 1;
-        
-        // 检查是否在当前页显示的范围内
         const pageStart = state.pageIndex * PAGE_SIZE;
         const pageEnd = Math.min(pageStart + PAGE_SIZE, state.results.length);
         
+        // 检查序号是否在当前展示的页面范围内
         if (choice < pageStart + 1 || choice > pageEnd) {
-            // 输入的序号不在当前页范围内
             return session.send(`请输入当前页显示的序号 (${pageStart + 1}-${pageEnd})。`);
         }
         
         if (idx >= 0 && idx < state.results.length) {
             const item = state.results[idx];
+            
+            // 【新功能】选择合法序号后，撤回列表消息
+            await tryWithdraw(session, state.messageIds);
+            
             clearState(session.cid);
             try {
-                // 确保 Cookie 有效（自动刷新）
                 await ensureValidCookie();
                 
                 if (state.type === 'author') {

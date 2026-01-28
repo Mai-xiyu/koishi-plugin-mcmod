@@ -1,0 +1,58 @@
+{
+  "name": "koishi-plugin-cfmrmod",
+  "version": "1.0.0",
+  "description": "Koishi 插件：搜索 CurseForge/Modrinth/MCMod 并渲染图片卡片",
+  "main": "dist/index.js",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": "./dist/index.js",
+    "./package.json": "./package.json"
+  },
+  "keywords": [
+    "koishi",
+    "koishi-plugin",
+    "minecraft",
+    "curseforge",
+    "modrinth",
+    "mod",
+    "modpack",
+    "mcmod",
+    "mcmod.cn"
+  ],
+  "author": "mai_xiyu",
+  "homepage": "https://github.com/Mai-xiyu/koishi-plugin-mcmod",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Mai-xiyu/koishi-plugin-mcmod.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Mai-xiyu/koishi-plugin-mcmod/issues"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=14"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "pub": "npm run build && npm publish --access public"
+  },
+  "peerDependencies": {
+    "koishi": "^4.0.0"
+  },
+  "dependencies": {
+    "@napi-rs/canvas": "^0.1.55",
+    "cheerio": "^1.0.0-rc.12",
+    "marked": "^9.1.5",
+    "node-fetch": "^2.6.12"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  },
+  "koishi": {
+    "description": {
+      "zh": "从 CurseForge/Modrinth/MCMod 搜索模组/整合包/光影等内容，并生成图片卡片。"
+    }
+  }
+}

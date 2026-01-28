@@ -22,13 +22,13 @@
     "mcmod.cn"
   ],
   "author": "mai_xiyu",
-  "homepage": "https://github.com/Mai-xiyu/koishi-plugin-mcmod",
+  "homepage": "https://github.com/Mai-xiyu/koishi-plugin-cfmrmod",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Mai-xiyu/koishi-plugin-mcmod.git"
+    "url": "git+https://github.com/Mai-xiyu/koishi-plugin-cfmrmod.git"
   },
   "bugs": {
-    "url": "https://github.com/Mai-xiyu/koishi-plugin-mcmod/issues"
+    "url": "https://github.com/Mai-xiyu/koishi-plugin-cfmrmod/issues"
   },
   "license": "MIT",
   "engines": {

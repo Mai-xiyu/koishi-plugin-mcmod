@@ -564,7 +564,7 @@ async function drawModCard(url) {
         versions.forEach(v => {
             dummy.font = `14px "${font}"`;
             const lw = dummy.measureText(v.l).width + 10;
-            const lines = wrapText(dummy, v.v, 0, 0, contentW - lw, 20, 100, false) / 20;
+            const lines = wrapText(dummy, v.v, 0, 0, contentW - lw, 20, 500, false) / 20;
             extraH += lines * 20 + 10;
         });
     }
@@ -578,7 +578,7 @@ async function drawModCard(url) {
             const isHeader = node.tag === 'h';
             dummy.font = `${isHeader ? 'bold' : ''} ${isHeader ? 22 : 16}px "${font}"`;
             const lh = isHeader ? 32 : 26;
-            const lines = wrapText(dummy, node.val, 0, 0, contentW, lh, 100, false) / lh;
+            const lines = wrapText(dummy, node.val, 0, 0, contentW, lh, 5000, false) / lh;
             descH += lines * lh + (isHeader ? 15 : 10);
         }
         else if (node.type === 'i') {

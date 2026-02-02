@@ -475,10 +475,58 @@ export function apply(ctx: Context, config: any, options: { cfmr: any }) {
     return { sent: true, updated: true };
   };
 
-  if (config.enabled) {
-    const tick = Math.max(60 * 1000, Number(config.interval) || 30 * 60 * 1000);
-    ctx.setInterval(() => checkOnce().catch(() => null), tick);
-  }
+  // 自动检查更新定时器
+  const startAutoCheck = async () => {
+    // 首先加载配置文件
+    await loadConfigFromFile();
+    
+    // 计算轮询间隔：取所有订阅中最小的 interval，最小不低于 1 分钟
+    const getMinInterval = () => {
+      const subs = getConfigSubs();
+      if (!subs.length) return Number(config.interval) || 30 * 60 * 1000;
+      const intervals = subs.map(s => s.interval);
+      return Math.min(...intervals);
+    };
+    
+    // 使用较短的基准轮询间隔（1分钟），让 checkOnce 内部判断每个订阅是否到期
+    // 这样可以支持每个订阅的独立 interval
+    const baseTick = 60 * 1000; // 1 分钟基准轮询
+    
+    // 自动轮询函数：每次都检查 config.enabled
+    const autoCheckLoop = async () => {
+      try {
+        await loadConfigFromFile();
+        if (config.enabled) {
+          const subs = getConfigSubs();
+          if (subs.length > 0) {
+            logger.debug(`自动检查更新开始，共 ${subs.length} 个订阅...`);
+            const stats = await checkOnce();
+            if (stats) {
+              logger.debug(`自动检查完成: checked=${stats.checked}, updated=${stats.updated}, skipped=${stats.skipped}, failed=${stats.failed}`);
+            }
+          }
+        }
+      } catch (e) {
+        logger.warn(`自动检查更新失败: ${e.message}`);
+      }
+    };
+
+    // 启动时延迟执行一次初始检查（给 bot 连接时间）
+    ctx.setTimeout(async () => {
+      await autoCheckLoop();
+    }, 10 * 1000);
+
+    // 设置定时器，每分钟轮询一次，由 checkOnce 内部判断哪些订阅到期
+    ctx.setInterval(autoCheckLoop, baseTick);
+    
+    const minInterval = getMinInterval();
+    logger.info(`自动更新检查已启动，基准轮询间隔: 1 分钟，最短订阅间隔: ${Math.round(minInterval / 60000)} 分钟`);
+  };
+
+  // 使用 ctx.on('ready') 确保在 Koishi 完全就绪后启动
+  ctx.on('ready', () => {
+    startAutoCheck().catch(e => logger.warn(`启动自动检查失败: ${e.message}`));
+  });
 
   ctx.command('notify.add <platform> <projectId>', '添加更新订阅')
     .action(async ({ session }, platform, projectId) => {
